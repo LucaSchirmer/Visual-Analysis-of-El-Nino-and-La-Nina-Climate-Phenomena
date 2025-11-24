@@ -138,8 +138,13 @@
             const rainSeries = (rainfall || []).filter(d => (d.country_code === countryCode) || (d.country_name === countryName));
             const tempSeries = (temperature || []).filter(d => (d.country_code === countryCode) || (d.country_name === countryName));
             const fishSeries = (fishing || []).filter(d => {
-                const c = (d.country || d.country_name || '').toString();
-                return c === countryName || c === countryCode;
+                const name = (d.country_name || d.country || '').toString();
+                const iso3 = (d.country_iso3 || '').toString();
+                const uncode = (d.country_un_code || '').toString();
+                const matchName = name && name.toLowerCase() === (countryName || '').toLowerCase();
+                const matchIso = iso3 && iso3.toUpperCase() === (countryCode || '').toString().toUpperCase();
+                const matchUn = uncode && uncode === (countryCode || '').toString();
+                return matchName || matchIso || matchUn;
             });
 
             // Ensure date parsing
@@ -148,7 +153,12 @@
 
             drawTimeSeries('#rainfall-plot', rainSeries, 'rainfall', 'Rainfall (mm)');
             drawTimeSeries('#temperature-plot', tempSeries, 'temperature', 'Temperature (°C)');
-            drawTimeSeries('#fishing-plot', fishSeries.map(d => ({ date: d.year ? new Date(d.year,0,1) : d.date, tonnage: d.tonnage || d.tonnage })), 'tonnage', 'Tonnage (metric tons)');
+            // Map aggregated fishing rows to a date + numeric `total_tonnes` field for plotting
+            const fishMapped = fishSeries.map(d => ({
+                date: d.year ? new Date(+d.year,0,1) : (d.date ? new Date(d.date) : null),
+                total_tonnes: d.total_tonnes !== undefined ? +d.total_tonnes : (d.tonnage !== undefined ? +d.tonnage : NaN)
+            }));
+            drawTimeSeries('#fishing-plot', fishMapped, 'total_tonnes', 'Tonnage (metric tons)');
 
             // Draw ONI plot (monthly values colored by phase/intensity)
             const oniSeries = (oni || []).filter(d => d.date && !isNaN(d.oni));
