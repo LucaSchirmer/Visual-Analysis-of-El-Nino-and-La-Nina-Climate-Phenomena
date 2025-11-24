@@ -1,0 +1,346 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Test Plots — Data Format Check</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="scripts/data-processing.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        #status-container { margin-bottom: 10px; }
+        .status { padding: 6px; border-radius: 4px; margin-bottom: 4px; }
+        .status.loading { background: #fff3cd; }
+        .status.success { background: #d4edda; }
+        .status.error { background: #f8d7da; }
+        .chart { margin: 20px 0; }
+        svg { border: 1px solid #eee; background: #fafafa; }
+    </style>
+</head>
+<body>
+    <h1>Data Format Quickcheck — Test Plots</h1>
+    <div id="status-container"></div>
+    <div id="data-container"></div>
+
+    <div id="plots">
+        <div class="chart">
+            <h3>Rainfall (sample country)</h3>
+            <div id="rainfall-plot"></div>
+        </div>
+        <div class="chart">
+            <h3>Temperature (sample country)</h3>
+            <div id="temperature-plot"></div>
+        </div>
+        <div class="chart">
+            <h3>Fishing (sample country)</h3>
+            <div id="fishing-plot"></div>
+        </div>
+        <div class="chart">
+            <h3>ONI (Oceanic Niño Index)</h3>
+            <div id="oni-plot"></div>
+        </div>
+        <div class="chart">
+            <h3>GDP Growth (sample/default countries)</h3>
+            <div id="gdp-plot"></div>
+        </div>
+    </div>
+
+    <script>
+        // Helper to draw a simple timeseries line chart
+        function drawTimeSeries(containerSelector, data, valueKey, yLabel) {
+            const container = d3.select(containerSelector);
+            container.selectAll('*').remove();
+
+            if (!data || data.length === 0) {
+                container.append('div').text('No data to display for this series.');
+                return;
+            }
+
+            const margin = {top: 10, right: 20, bottom: 30, left: 50};
+            const width = 800 - margin.left - margin.right;
+            const height = 200 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+              .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const x = d3.scaleTime()
+                .domain(d3.extent(data, d => d.date))
+                .range([0, width]);
+
+            const y = d3.scaleLinear()
+                .domain(d3.extent(data, d => +d[valueKey])).nice()
+                .range([height, 0]);
+
+            const xAxis = d3.axisBottom(x).ticks(6);
+            const yAxis = d3.axisLeft(y).ticks(6);
+
+            svg.append('g')
+                .attr('transform', `translate(0,${height})`)
+                .call(xAxis);
+
+            svg.append('g')
+                .call(yAxis);
+
+            const line = d3.line()
+                .defined(d => d.date && !isNaN(d[valueKey]))
+                .x(d => x(d.date))
+                .y(d => y(+d[valueKey]));
+
+            svg.append('path')
+                .datum(data.sort((a,b) => a.date - b.date))
+                .attr('fill', 'none')
+                .attr('stroke', '#1f77b4')
+                .attr('stroke-width', 1.5)
+                .attr('d', line);
+
+            svg.append('text')
+                .attr('x', 4)
+                .attr('y', 12)
+                .style('font-size', '12px')
+                .text(yLabel);
+        }
+
+        async function runChecks() {
+            // Load both datasets using the shared loader functions
+            const oni = await loadONIData();
+            const rainfall = await loadRainfallData();
+            const temperature = await loadTemperatureData();
+            const fishing = await loadFishingData();
+            // Load GDP for a few default countries (API may restrict queries)
+            const gdp = await loadGDPData(['PER','ECU','CHL','COL']);
+
+            // Quick sanity logging
+            console.log('Rainfall sample:', rainfall && rainfall.length ? rainfall.slice(0,5) : rainfall);
+            console.log('Temperature sample:', temperature && temperature.length ? temperature.slice(0,5) : temperature);
+
+            // Pick first country found in rainfall data (if available)
+            let sampleCountry = null;
+            if (rainfall && rainfall.length) {
+                sampleCountry = rainfall.find(d => d.country_code || d.country_name);
+            }
+            if (!sampleCountry && temperature && temperature.length) {
+                sampleCountry = temperature.find(d => d.country_code || d.country_name);
+            }
+
+            if (!sampleCountry) {
+                d3.select('#data-container').html('<p>No country-level data found. Check CSV paths and formats.</p>');
+                return;
+            }
+
+            const countryCode = sampleCountry.country_code || sampleCountry.country_name;
+            const countryName = sampleCountry.country_name || countryCode;
+
+            d3.select('#data-container').html(`<p>Sample country: <strong>${countryName}</strong> (${countryCode})</p>`);
+
+            // Filter series for that country
+            const rainSeries = (rainfall || []).filter(d => (d.country_code === countryCode) || (d.country_name === countryName));
+            const tempSeries = (temperature || []).filter(d => (d.country_code === countryCode) || (d.country_name === countryName));
+            const fishSeries = (fishing || []).filter(d => {
+                const c = (d.country || d.country_name || '').toString();
+                return c === countryName || c === countryCode;
+            });
+
+            // Ensure date parsing
+            rainSeries.forEach(d => { if (!(d.date instanceof Date)) d.date = new Date(d.date); });
+            tempSeries.forEach(d => { if (!(d.date instanceof Date)) d.date = new Date(d.date); });
+
+            drawTimeSeries('#rainfall-plot', rainSeries, 'rainfall', 'Rainfall (mm)');
+            drawTimeSeries('#temperature-plot', tempSeries, 'temperature', 'Temperature (°C)');
+            drawTimeSeries('#fishing-plot', fishSeries.map(d => ({ date: d.year ? new Date(d.year,0,1) : d.date, tonnage: d.tonnage || d.tonnage })), 'tonnage', 'Tonnage (metric tons)');
+
+            // Draw ONI plot (monthly values colored by phase/intensity)
+            const oniSeries = (oni || []).filter(d => d.date && !isNaN(d.oni));
+            drawONIPlot('#oni-plot', oniSeries);
+
+            // GDP plotting: try to find GDP for sample country; otherwise plot default countries returned by the API
+            let gdpForCountry = [];
+            if (gdp && gdp.length) {
+                gdpForCountry = gdp.filter(d => {
+                    return (d.country && d.country.toLowerCase() === (countryName || '').toLowerCase()) || (d.countryCode && d.countryCode === countryCode);
+                });
+            }
+
+            if (gdpForCountry && gdpForCountry.length) {
+                // Map to date + value
+                const gdpSeries = gdpForCountry.map(d => ({ date: new Date(d.year,0,1), gdpGrowth: d.gdpGrowth }));
+                drawTimeSeries('#gdp-plot', gdpSeries, 'gdpGrowth', 'GDP growth (%)');
+            } else if (gdp && gdp.length) {
+                // Group by country and draw multiple series
+                const grouped = Array.from(d3.group(gdp, d => d.country), ([name, values]) => ({ name, values: values.map(v => ({ date: new Date(v.year,0,1), gdpGrowth: v.gdpGrowth })) }));
+                drawMultiSeries('#gdp-plot', grouped, 'gdpGrowth', 'GDP growth (%)');
+            } else {
+                d3.select('#gdp-plot').append('div').text('No GDP data available.');
+            }
+
+            // Additional quick checks: counts and missing values
+            const rainCount = rainSeries.length;
+            const tempCount = tempSeries.length;
+            const rainMissing = rainSeries.filter(d => isNaN(d.rainfall)).length;
+            const tempMissing = tempSeries.filter(d => isNaN(d.temperature)).length;
+
+            d3.select('#data-container')
+                .append('div')
+                .html(`<p>Rainfall records for ${countryName}: ${rainCount} (missing values: ${rainMissing})<br>Temperature records for ${countryName}: ${tempCount} (missing values: ${tempMissing})</p>`);
+        }
+
+        window.addEventListener('DOMContentLoaded', () => {
+            // Provide a manual button to re-run the checks
+            const btn = d3.select('body').insert('button', '#plots')
+                .text('Run Data Checks & Draw Plots')
+                .style('display', 'block')
+                .style('margin', '10px 0')
+                .on('click', runChecks);
+
+            // Also run once automatically
+            runChecks();
+        });
+
+        // Draw multiple series (e.g., multiple countries) with legend
+        function drawMultiSeries(containerSelector, seriesArray, valueKey, yLabel) {
+            const container = d3.select(containerSelector);
+            container.selectAll('*').remove();
+
+            if (!seriesArray || seriesArray.length === 0) {
+                container.append('div').text('No series to display.');
+                return;
+            }
+
+            const margin = {top: 10, right: 120, bottom: 30, left: 50};
+            const width = 800 - margin.left - margin.right;
+            const height = 240 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+              .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const allValues = seriesArray.flatMap(s => s.values);
+            const x = d3.scaleTime().domain(d3.extent(allValues, d => d.date)).range([0, width]);
+            const y = d3.scaleLinear().domain(d3.extent(allValues, d => +d[valueKey])).nice().range([height, 0]);
+
+            svg.append('g').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(6));
+            svg.append('g').call(d3.axisLeft(y).ticks(6));
+
+            const color = d3.scaleOrdinal(d3.schemeTableau10).domain(seriesArray.map(s => s.name));
+
+            const line = d3.line().defined(d => d.date && !isNaN(d[valueKey])).x(d => x(d.date)).y(d => y(+d[valueKey]));
+
+            seriesArray.forEach(s => {
+                svg.append('path')
+                    .datum(s.values.sort((a,b) => a.date - b.date))
+                    .attr('fill', 'none')
+                    .attr('stroke', color(s.name))
+                    .attr('stroke-width', 1.5)
+                    .attr('d', line);
+            });
+
+            // Legend
+            const legend = svg.append('g').attr('transform', `translate(${width + 10},0)`);
+            seriesArray.forEach((s, i) => {
+                const g = legend.append('g').attr('transform', `translate(0,${i*18})`);
+                g.append('rect').attr('width',12).attr('height',12).attr('fill', color(s.name));
+                g.append('text').attr('x',16).attr('y',10).text(s.name).style('font-size','12px');
+            });
+        }
+
+        // Draw ONI monthly bar chart colored by phase (El Niño warm, La Niña cool)
+        function drawONIPlot(containerSelector, data) {
+            const container = d3.select(containerSelector);
+            container.selectAll('*').remove();
+
+            if (!data || data.length === 0) {
+                container.append('div').text('No ONI data available.');
+                return;
+            }
+
+            const margin = {top: 10, right: 20, bottom: 30, left: 50};
+            const width = 900 - margin.left - margin.right;
+            const height = 200 - margin.top - margin.bottom;
+
+            const svg = container.append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+              .append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            const sorted = data.slice().sort((a,b) => a.date - b.date);
+            const x = d3.scaleTime().domain(d3.extent(sorted, d => d.date)).range([0, width]);
+            // Use symmetric domain around zero based on maximum absolute ONI value.
+            let maxAbs = d3.max(sorted, d => Math.abs(+d.oni));
+            if (!isFinite(maxAbs) || isNaN(maxAbs)) maxAbs = 1;
+            // Cap extreme values to avoid bad scaling from malformed rows
+            const cap = 10; // ONI values beyond this are likely malformed
+            if (maxAbs > cap) maxAbs = cap;
+            const pad = 1.05; // small padding
+            const y = d3.scaleLinear().domain([-maxAbs * pad, maxAbs * pad]).nice().range([height, 0]);
+
+            svg.append('g').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x).ticks(8));
+            svg.append('g').call(d3.axisLeft(y).ticks(6));
+
+            // compute bar width from minimum adjacent spacing
+            let minDx = Infinity;
+            for (let i = 1; i < sorted.length; i++) {
+                const dx = Math.abs(x(sorted[i].date) - x(sorted[i-1].date));
+                if (dx > 0 && dx < minDx) minDx = dx;
+            }
+            const barWidth = (isFinite(minDx) ? minDx * 0.9 : (width / sorted.length) * 0.8);
+
+            const phaseColor = phase => {
+                if (!phase) return '#999';
+                if (phase.toLowerCase().includes('el')) return '#d73027';
+                if (phase.toLowerCase().includes('la')) return '#4575b4';
+                return '#999';
+            };
+
+            const intensityWeight = intensity => {
+                if (!intensity) return 0.15;
+                const key = intensity.toLowerCase();
+                if (key.includes('very')) return 1.0;
+                if (key.includes('strong')) return 0.8;
+                if (key.includes('moderate')) return 0.6;
+                if (key.includes('weak')) return 0.35;
+                return 0.15;
+            };
+
+            const zeroY = y(0);
+
+            svg.selectAll('rect.oni-bar')
+                .data(sorted)
+                .enter()
+                .append('rect')
+                .attr('class', 'oni-bar')
+                .attr('x', d => x(d.date) - barWidth/2)
+                .attr('width', barWidth)
+                .attr('y', d => d.oni >= 0 ? y(d.oni) : zeroY)
+                .attr('height', d => Math.abs(y(d.oni) - zeroY))
+                .attr('fill', d => {
+                    const base = phaseColor(d.phase);
+                    const c = d3.color(base) || d3.color('#999');
+                    const opacity = intensityWeight(d.intensity);
+                    // return an rgba string honoring opacity
+                    return `rgba(${c.r},${c.g},${c.b},${opacity})`;
+                })
+                .attr('stroke', d => d.phase && d.phase.toLowerCase().includes('neutral') ? '#666' : 'none');
+
+            // add a 0 line
+            svg.append('line').attr('x1',0).attr('x2',width).attr('y1',zeroY).attr('y2',zeroY).attr('stroke','#333').attr('stroke-dasharray','2,2');
+
+            // Legend
+            const legend = svg.append('g').attr('transform', `translate(${width - 180},10)`);
+            const legendItems = [
+                {label: 'El Niño (warm) — intensity -> darker', color: '#d73027'},
+                {label: 'La Niña (cool) — intensity -> darker', color: '#4575b4'},
+                {label: 'Neutral', color: '#999'}
+            ];
+            legendItems.forEach((it, i) => {
+                const g = legend.append('g').attr('transform', `translate(0,${i*18})`);
+                g.append('rect').attr('width',12).attr('height',12).attr('fill', it.color).attr('opacity', 0.8);
+                g.append('text').attr('x',16).attr('y',10).text(it.label).style('font-size','11px');
+            });
+        }
+    </script>
+</body>
+</html>
