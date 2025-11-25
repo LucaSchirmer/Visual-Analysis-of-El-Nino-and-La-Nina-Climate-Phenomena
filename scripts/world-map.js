@@ -106,15 +106,27 @@ const createWorldMap = async () => {
     // Path generator that uses the mutable projection
     const pathGenerator = d3.geoPath().projection(projection);
 
-    // bind country data to SVG paths inside the group
-    mapGroup.selectAll("path")
-       .data(countries.features)
-       .join("path")
-       .attr("d", pathGenerator)
-       .attr("fill", '#eee')
-       .attr("stroke", COUNTRY_STROKE_COLOR)
-       .attr('stroke-width', 0.5)
-       .attr('vector-effect', 'non-scaling-stroke');
+    // helper to compute screen centroid robustly: use geographic centroid then project
+    function centroidXY(feature){
+        const g = d3.geoCentroid(feature);
+        if (!g || !Number.isFinite(g[0]) || !Number.isFinite(g[1])) return [Number.NaN, Number.NaN];
+        const p = projection(g);
+        if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return [Number.NaN, Number.NaN];
+        return p;
+    }
+
+     // bind country data to SVG paths inside the group
+     mapGroup.selectAll("path")
+         .data(countries.features)
+         .join("path")
+         .attr("d", pathGenerator)
+         .attr("fill", '#eee')
+         .attr("stroke", COUNTRY_STROKE_COLOR)
+         .attr('stroke-width', 0.5)
+         .attr('vector-effect', 'non-scaling-stroke');
+
+     // fishing overlay layer (circles) inside mapGroup so it follows projection/zoom
+     const fishingLayer = mapGroup.append('g').attr('class', 'fishing-layer');
 
     // --- Dataset selector UI (above the map) ---
     // insert toolbar immediately before the SVG so it appears directly above the map
@@ -148,18 +160,18 @@ const createWorldMap = async () => {
         selector.append('option').attr('value', d.key).text(d.label);
     }
 
-    // --- Legend placeholder ---
+    // --- Legend placeholder (vertical, right side) ---
     const legend = d3.select(container)
         .append('div')
         .attr('id', 'map-legend')
         .style('position', 'absolute')
-    // raise the legend a bit to avoid overlapping the fixed footer
-    .style('bottom', '48px')
-        .style('left', '50%')
-        .style('transform', 'translateX(-50%)')
+        // position to the right, centered vertically
+        .style('right', '12px')
+        .style('top', '50%')
+        .style('transform', 'translateY(-50%)')
         .style('z-index', 1000)
         .style('background', 'rgba(255,255,255,0.92)')
-        .style('padding', '8px 10px')
+        .style('padding', '10px')
         .style('border-radius', '6px')
         .style('box-shadow', '0 2px 10px rgba(0,0,0,0.12)')
         .style('display', 'flex')
@@ -168,22 +180,19 @@ const createWorldMap = async () => {
         .style('font-family', 'sans-serif')
         .style('font-size', '12px');
 
+    // title
     legend.append('div').attr('class','legend-title').style('font-weight','600').style('margin-bottom','6px').text('');
-    // gradient bar container
+    // max label directly under title (above the bar)
+    legend.append('div').attr('class','legend-max').style('font-size','12px').style('margin-bottom','6px').text('');
+    // vertical gradient bar container
     legend.append('div').attr('class','legend-bar')
-        .style('width','360px')
-        .style('height','12px')
+        .style('width','18px')
+        .style('height','220px')
         .style('border-radius','3px')
         .style('box-shadow','inset 0 0 0 1px rgba(0,0,0,0.05)')
         .style('background','#eee');
-    // labels container for min/max
-    const legendLabels = legend.append('div').attr('class','legend-labels')
-        .style('width','360px')
-        .style('display','flex')
-        .style('justify-content','space-between')
-        .style('margin-top','6px');
-    legendLabels.append('div').attr('class','legend-min').text('');
-    legendLabels.append('div').attr('class','legend-max').text('');
+    // min label under the bar
+    legend.append('div').attr('class','legend-min').style('font-size','12px').style('margin-top','6px').text('');
 
     // tooltip (hidden by default) — will show country name and value for current dataset/year
     const tooltip = d3.select(container)
@@ -259,6 +268,8 @@ const createWorldMap = async () => {
         // remember current year for tooltips and external sync
         currentYear = year;
         const meta = loaded.get(key);
+        // hide fishing overlay by default; fishing-specific rendering is handled below
+        fishingLayer.style('display', 'none');
         if (!meta) return;
         const yrMap = meta.byYearMean.get(year) || new Map();
         const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
@@ -274,30 +285,122 @@ const createWorldMap = async () => {
         const minV = d3.min(values);
         const maxV = d3.max(values);
         const color = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
-        mapGroup.selectAll('path')
-            .transition().duration(250)
-            .attr('fill', d => {
-                const v = valueForFeatureFromDataset(d, year, key);
-                return v == null ? '#eee' : color(v);
-            });
+        // if we're rendering fishing, don't recolor countries: instead render circles
+        if (key === 'fishing'){
+            // mute country fills
+            mapGroup.selectAll('path').attr('fill', '#eee');
+            renderFishingLayer(year);
+        } else {
+            mapGroup.selectAll('path')
+                .transition().duration(250)
+                .attr('fill', d => {
+                    const v = valueForFeatureFromDataset(d, year, key);
+                    return v == null ? '#eee' : color(v);
+                });
+        }
 
         // update legend: gradient, title and labels
         const ds = DATASETS.find(d=>d.key===key);
         const title = ds ? ds.label : key;
         legend.select('.legend-title').text(`${title} — ${year}`);
 
-        // build gradient from max->min by sampling stops
+        // build gradient from max->min by sampling stops so top corresponds to max
         const stops = 6;
         const gradColors = [];
-        for (let i=0;i<stops;i++){
-            const t = i/(stops-1);
-            const val = minV + (maxV-minV)*t;
+        for (let i = 0; i < stops; i++) {
+            const t = i / (stops - 1);
+            // sample value from max -> min
+            const val = maxV + (minV - maxV) * t;
             gradColors.push(color(val));
         }
-        const gradCss = `linear-gradient(to right, ${gradColors.join(',')})`;
+        const gradCss = `linear-gradient(to bottom, ${gradColors.join(',')})`;
         legend.select('.legend-bar').style('background', gradCss);
-        legend.select('.legend-min').text(minV.toFixed(2));
+        // show max at top and min at bottom
         legend.select('.legend-max').text(maxV.toFixed(2));
+        legend.select('.legend-min').text(minV.toFixed(2));
+    }
+
+    // Render fishing as proportional circles at country centroids for the given year
+    function renderFishingLayer(year){
+        const meta = loaded.get('fishing');
+        if (!meta) return;
+        const yrMap = meta.byYearMean.get(year) || new Map();
+        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+        if (values.length === 0){
+            fishingLayer.selectAll('circle.fish').remove();
+            legend.select('.legend-title').text('Fishing — ' + year);
+            legend.select('.legend-min').text('');
+            legend.select('.legend-max').text('');
+            legend.select('.legend-bar').style('background', '#eee');
+            return;
+        }
+
+        const minV = d3.min(values);
+        const maxV = d3.max(values);
+        const size = d3.scaleSqrt().domain([minV, maxV]).range([2, 24]);
+
+        // bind circles to country features so they update on projection changes
+        const circles = fishingLayer.selectAll('circle.fish')
+            .data(countries.features, d => d.id);
+
+        const enter = circles.enter().append('circle')
+            .attr('class', 'fish')
+            .attr('fill', 'rgba(0,120,180,0.65)')
+            .attr('stroke', '#044')
+            .attr('stroke-width', 0.4)
+            .attr('r', 0);
+
+        // set initial position for entered elements
+            enter.each(function(d){
+                const c = centroidXY(d);
+                const el = d3.select(this);
+                el.attr('cx', Number.isNaN(c[0]) ? -9999 : c[0]);
+                el.attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
+            });
+
+        // animate enters to target radius
+        enter.transition().duration(300).attr('r', function(d){
+            const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+            return (v == null || Number.isNaN(v)) ? 0 : size(v);
+        });
+
+        // update existing elements
+        circles.transition().duration(300)
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; })
+            .attr('r', function(d){
+                const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+                return (v == null || Number.isNaN(v)) ? 0 : size(v);
+            });
+
+        // exit
+        circles.exit().transition().duration(200).attr('r',0).remove();
+
+        // show fishing overlay
+        fishingLayer.style('display', null);
+
+    // update legend for fishing (simple min/max + title)
+    legend.select('.legend-title').text(`Fishing — ${year}`);
+    // show max at top and min at bottom
+    legend.select('.legend-max').text(maxV.toFixed(0));
+    legend.select('.legend-min').text(minV.toFixed(0));
+    // use a blue gradient (dark at top -> light at bottom) so legend color matches circle fill semantics
+    legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
+
+        // attach circle hover to show tooltip (reuse tooltip format)
+        fishingLayer.selectAll('circle.fish')
+            .on('mouseover', function(event, d){
+                const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
+                const val = valueForFeatureFromDataset(d, year, 'fishing');
+                const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' tonnes';
+                tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Fishing: ${txt} (${year})</div>`);
+            })
+            .on('mousemove', function(event){
+                const [mx, my] = d3.pointer(event, container);
+                const offsetX = 12, offsetY = 12;
+                tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
+            })
+            .on('mouseout', function(){ tooltip.style('display', 'none'); });
     }
 
     // attach hover handlers to paths to show the tooltip using cached data
@@ -401,6 +504,10 @@ const createWorldMap = async () => {
         projection.rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE, 0]);
         // redraw visible paths with the reset projection
         mapGroup.selectAll('path').attr('d', pathGenerator);
+        // update fishing circles after projection reset so they remain at centroids
+        fishingLayer.selectAll('circle.fish')
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
         svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
     });
 
@@ -435,6 +542,10 @@ const createWorldMap = async () => {
 
             // update all paths
             mapGroup.selectAll('path').attr('d', pathGenerator);
+            // also update fishing circles positions to follow the rotated projection
+            fishingLayer.selectAll('circle.fish')
+                .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+                .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
         })
         .on('end', () => {
             setDraggingCursor(false);
