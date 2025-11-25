@@ -11,10 +11,11 @@ warnings.filterwarnings("ignore")
 print("\n==== PROCESSING TEMPERATURE DATA (FROM NETCDF) ====")
 
 # --- 1. SETUP ---
-DATA_DIR = 'data'
-# Look for the specific file shown in your screenshot
-# It seems to be in 'python_scripts/data/'
-# We use a wildcard pattern to find it easily
+# Use the script's own directory to resolve the data folder so the script
+# works when invoked from the repo root or from inside the `python_scripts` folder.
+SCRIPT_DIR = os.path.dirname(__file__)
+DATA_DIR = os.path.join(SCRIPT_DIR, 'data')
+# Look for the specific file shown in your screenshot (timeseries-tas-annual-mean*.nc)
 search_pattern = os.path.join(DATA_DIR, 'timeseries-tas-annual-mean*.nc')
 nc_files = glob.glob(search_pattern)
 
@@ -79,6 +80,51 @@ try:
     
     # Drop rows without data
     final_df = final_df.dropna(subset=['temperature_celsius'])
+    
+    # --- 4a. FILTER YEARS: remove rows before 1950 to match other datasets
+    # Try to create a `year` column from common date/time fields if necessary
+    def extract_year(df):
+        if 'year' in df.columns:
+            # ensure integer year
+            try:
+                df['year'] = df['year'].astype(int)
+                return df
+            except Exception:
+                pass
+        # common time columns
+        for col in ['time', 'date', 'Time', 'Date']:
+            if col in df.columns:
+                try:
+                    df['year'] = pd.to_datetime(df[col]).dt.year
+                    return df
+                except Exception:
+                    # sometimes `time` is numeric year already
+                    try:
+                        df['year'] = df[col].astype(int)
+                        return df
+                    except Exception:
+                        pass
+        # attempt to parse index if it contains datetime-like values
+        try:
+            idx = df.index
+            if pd.api.types.is_datetime64_any_dtype(idx):
+                df = df.reset_index()
+                df['year'] = pd.to_datetime(df['index']).dt.year
+                return df
+        except Exception:
+            pass
+        # If we reach here, we couldn't reliably extract year
+        return df
+
+    final_df = extract_year(final_df)
+
+    if 'year' in final_df.columns:
+        before_count = len(final_df)
+        final_df = final_df[final_df['year'] >= 1950]
+        after_count = len(final_df)
+        print(f"Filtered temperature data: removed {before_count - after_count} rows before 1950; {after_count} rows remain.")
+    else:
+        print("Warning: could not detect a year column in temperature data — no temporal filtering applied.")
     
     # Save
     OUTPUT_FILE = os.path.join(DATA_DIR, 'temperature_by_country.csv')

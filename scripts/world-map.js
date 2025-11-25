@@ -2,13 +2,13 @@
  * File constants and functions for creating and rendering the world map
  */
 // rotate 160° to make the Pacific central  
-const WORLD_MAP_PROJECTION_OFFSET_LONGITUDE = 160; 
+const WORLD_MAP_PROJECTION_OFFSET_LONGITUDE = 160;
 const WORLD_MAP_PROJECTION_OFFSET_LATITUDE = 0;
 
 const WORLD_MAP_SCALE_FACTOR = 160;
 
 const WORLD_MAP_ATLAS_URL = "https://unpkg.com/world-atlas@2/countries-110m.json";
-const COUNTRY_FILL_COLOR = "#cce5df";
+const COUNTRY_FILL_COLOR = "#eee";
 const COUNTRY_STROKE_COLOR = "#333";
 
 
@@ -81,15 +81,15 @@ const createWorldMap = async () => {
     const countries = await loadCountries();
 
     const projection = d3.geoNaturalEarth1()
-        .rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE]) 
+        .rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE])
         .scale(WORLD_MAP_SCALE_FACTOR)
         .fitSize([width, height], countries);
 
 
     const svg = d3.select("#world-map-chart")
         .append("svg")
-        .attr("width", width)
-        .attr("height", height)
+        .attr("width", "100%")
+        .attr("height", "100%")
         .attr("viewBox", `0 0 ${width} ${height}`)
         .attr("preserveAspectRatio", "xMidYMid meet");
 
@@ -98,23 +98,37 @@ const createWorldMap = async () => {
 
     // Add a background rect to capture drag/zoom events
     const bg = svg.append('rect')
-        .attr('width', width)
-        .attr('height', height)
+        .attr('width', '100%')
+        .attr('height', '100%')
         .attr('fill', 'transparent')
         .lower();
 
     // Path generator that uses the mutable projection
     const pathGenerator = d3.geoPath().projection(projection);
 
+    // helper to compute screen centroid robustly:
+    function centroidXY(feature){
+        const g = d3.geoCentroid(feature);
+        if (!g || !Number.isFinite(g[0]) || !Number.isFinite(g[1])) return [Number.NaN, Number.NaN];
+        const p = projection(g);
+        if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return [Number.NaN, Number.NaN];
+        return p;
+    }
+
     // bind country data to SVG paths inside the group
     mapGroup.selectAll("path")
-       .data(countries.features)
-       .join("path")
-       .attr("d", pathGenerator)
-       .attr("fill", '#eee')
-       .attr("stroke", COUNTRY_STROKE_COLOR)
-       .attr('stroke-width', 0.5)
-       .attr('vector-effect', 'non-scaling-stroke');
+        .data(countries.features)
+        .join("path")
+        .attr("d", pathGenerator)
+        .attr("fill", COUNTRY_FILL_COLOR)
+        .attr("stroke", COUNTRY_STROKE_COLOR)
+        .attr('stroke-width', 0.5)
+        .attr('vector-effect', 'non-scaling-stroke');
+
+    // fishing overlay layer (circles)
+    const fishingLayer = mapGroup.append('g').attr('class', 'fishing-layer');
+    // rainfall overlay layer (stroke-only rings)
+    const rainfallLayer = mapGroup.append('g').attr('class', 'rainfall-layer');
 
     // --- Dataset selector UI (above the map) ---
     // insert toolbar immediately before the SVG so it appears directly above the map
@@ -122,44 +136,88 @@ const createWorldMap = async () => {
     const toolbar = d3.select(container)
         .insert('div', () => svgNode)
         .attr('id', 'map-dataset-toolbar')
-        // center the toolbar and add spacing so it doesn't overlap other page items
         .style('display', 'flex')
         .style('justify-content', 'center')
         .style('align-items', 'center')
         .style('gap', '8px')
-    .style('width', '100%')
-    // add more top margin so the toolbar doesn't overlap the page title
-    .style('margin', '40px 0 8px')
+        .style('width', '100%')
+        .style('margin', '40px 0 8px')
         .style('font-family', 'sans-serif')
         .style('font-size', '13px');
 
-    toolbar.append('label').text('Dataset: ');
-    const selector = toolbar.append('select').attr('id', 'map-dataset-select')
-        .style('min-width', '220px');
-
     const DATASETS = [
-        { key: 'temperature', label: 'Temperature', path: 'python_scripts/data/temperature_by_country.csv' },
-        { key: 'rainfall', label: 'Rainfall', path: 'python_scripts/data/rainfall_by_country.csv' },
-        { key: 'fishing', label: 'Fishing', path: 'python_scripts/data/fishing_by_country_year.csv' },
-        { key: 'oni', label: 'ONI', path: 'python_scripts/data/oni_monthly.csv' }
+        { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv' },
+        { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
+        { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
     ];
 
+    // create checkbox toggles so multiple datasets can be selected at once
+    const toggles = toolbar.append('div').attr('id','map-dataset-toggles')
+        .style('display','flex').style('gap','12px').style('align-items','center');
+
     for (const d of DATASETS) {
-        selector.append('option').attr('value', d.key).text(d.label);
+        const id = `dataset-toggle-${d.key}`;
+        const wrap = toggles.append('label').style('display','flex').style('align-items','center').style('gap','6px');
+        wrap.append('input')
+            .attr('type','checkbox')
+            .attr('id', id)
+            .attr('data-key', d.key)
+            .on('change', function(){
+                    const key = this.dataset.key || this.getAttribute('data-key');
+                    const checked = this.checked;
+                    // ensure dataset is loaded
+                    loadDataset(key, { apply: false });
+                    // maintain insertion order by removing then adding
+                    if (checked){ if (selectedDatasets.has(key)) selectedDatasets.delete(key); selectedDatasets.add(key); }
+                    else { selectedDatasets.delete(key); }
+
+                    // overlays: fishing and rainfall
+                    if (key === 'fishing' || key === 'rainfall'){
+                        if (checked){
+                            const meta = loaded.get(key);
+                            const year = currentYear ?? meta?.years?.at(-1) ?? null;
+                            if (year != null){
+                                if (key === 'fishing') renderFishingLayer(year);
+                                else renderRainfallLayer(year);
+                            }
+                        } else {
+                            if (key === 'fishing') fishingLayer.style('display', 'none');
+                            else rainfallLayer.style('display', 'none');
+                        }
+                    } else {
+                        if (checked){
+                            currentDatasetKey = key;
+                            const meta = loaded.get(key);
+                            const year = currentYear ?? meta?.years?.at(-1) ?? null;
+                            if (year != null) applyColorsForDatasetYear(key, year);
+                        } else {
+                            if (currentDatasetKey === key){
+                                // clear any choropleth coloring
+                                currentDatasetKey = null;
+                                mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
+                                legend.select('.legend-title').text('');
+                                legend.select('.legend-min').text('');
+                                legend.select('.legend-max').text('');
+                                legend.select('.legend-bar').style('background', '#eee');
+                            }
+                        }
+                    }
+                }
+            );
+        wrap.append('span').text(d.label).style('user-select','none');
     }
 
-    // --- Legend placeholder ---
+    // --- Legend placeholder (vertical, right side) ---
     const legend = d3.select(container)
         .append('div')
         .attr('id', 'map-legend')
         .style('position', 'absolute')
-    // raise the legend a bit to avoid overlapping the fixed footer
-    .style('bottom', '48px')
-        .style('left', '50%')
-        .style('transform', 'translateX(-50%)')
+        .style('right', '12px')
+        .style('top', '50%')
+        .style('transform', 'translateY(-50%)')
         .style('z-index', 1000)
         .style('background', 'rgba(255,255,255,0.92)')
-        .style('padding', '8px 10px')
+        .style('padding', '10px')
         .style('border-radius', '6px')
         .style('box-shadow', '0 2px 10px rgba(0,0,0,0.12)')
         .style('display', 'flex')
@@ -168,24 +226,21 @@ const createWorldMap = async () => {
         .style('font-family', 'sans-serif')
         .style('font-size', '12px');
 
+    // title
     legend.append('div').attr('class','legend-title').style('font-weight','600').style('margin-bottom','6px').text('');
-    // gradient bar container
+    // max label directly under title (above the bar)
+    legend.append('div').attr('class','legend-max').style('font-size','12px').style('margin-bottom','6px').text('');
+    // vertical gradient bar container
     legend.append('div').attr('class','legend-bar')
-        .style('width','360px')
-        .style('height','12px')
+        .style('width','18px')
+        .style('height','220px')
         .style('border-radius','3px')
         .style('box-shadow','inset 0 0 0 1px rgba(0,0,0,0.05)')
         .style('background','#eee');
-    // labels container for min/max
-    const legendLabels = legend.append('div').attr('class','legend-labels')
-        .style('width','360px')
-        .style('display','flex')
-        .style('justify-content','space-between')
-        .style('margin-top','6px');
-    legendLabels.append('div').attr('class','legend-min').text('');
-    legendLabels.append('div').attr('class','legend-max').text('');
+    // min label under the bar
+    legend.append('div').attr('class','legend-min').style('font-size','12px').style('margin-top','6px').text('');
 
-    // tooltip (hidden by default) — will show country name and value for current dataset/year
+    // tooltip will show country name and value for current dataset/year
     const tooltip = d3.select(container)
         .append('div')
         .attr('id', 'map-tooltip')
@@ -202,11 +257,11 @@ const createWorldMap = async () => {
     // store loaded datasets: key -> { byYearMean: Map(year -> Map(key->value)), years: [] }
     const loaded = new Map();
     let currentDatasetKey = null;
-    let currentYear = null; // last-applied year for the current visualization
+    let currentYear = null;
+    const selectedDatasets = new Set();
 
     // parse raw CSV rows into a uniform row shape
     // helper functions moved to module scope
-
     async function loadDataset(key, {apply=true} = {}){
         const ds = DATASETS.find(d=>d.key===key);
         if (!ds) return;
@@ -263,7 +318,7 @@ const createWorldMap = async () => {
         const yrMap = meta.byYearMean.get(year) || new Map();
         const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
         if (values.length === 0){
-            mapGroup.selectAll('path').attr('fill', '#eee');
+            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
             // clear legend
             legend.select('.legend-title').text('');
             legend.select('.legend-min').text('');
@@ -274,30 +329,213 @@ const createWorldMap = async () => {
         const minV = d3.min(values);
         const maxV = d3.max(values);
         const color = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
-        mapGroup.selectAll('path')
-            .transition().duration(250)
-            .attr('fill', d => {
-                const v = valueForFeatureFromDataset(d, year, key);
-                return v == null ? '#eee' : color(v);
-            });
+        // if we're rendering fishing, don't recolor countries: instead render circles
+        if (key === 'fishing'){
+            // mute country fills
+            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
+            renderFishingLayer(year);
+        } else {
+            mapGroup.selectAll('path')
+                .transition().duration(250)
+                .attr('fill', d => {
+                    const v = valueForFeatureFromDataset(d, year, key);
+                    return v == null ? '#eee' : color(v);
+                });
+        }
 
         // update legend: gradient, title and labels
         const ds = DATASETS.find(d=>d.key===key);
         const title = ds ? ds.label : key;
         legend.select('.legend-title').text(`${title} — ${year}`);
 
-        // build gradient from max->min by sampling stops
+        // build gradient from max->min by sampling stops so top corresponds to max
         const stops = 6;
         const gradColors = [];
-        for (let i=0;i<stops;i++){
-            const t = i/(stops-1);
-            const val = minV + (maxV-minV)*t;
+        for (let i = 0; i < stops; i++) {
+            const t = i / (stops - 1);
+            // sample value from max -> min
+            const val = maxV + (minV - maxV) * t;
             gradColors.push(color(val));
         }
-        const gradCss = `linear-gradient(to right, ${gradColors.join(',')})`;
+        const gradCss = `linear-gradient(to bottom, ${gradColors.join(',')})`;
         legend.select('.legend-bar').style('background', gradCss);
-        legend.select('.legend-min').text(minV.toFixed(2));
         legend.select('.legend-max').text(maxV.toFixed(2));
+        legend.select('.legend-min').text(minV.toFixed(2));
+        try {
+            if (selectedDatasets?.has('fishing')) renderFishingLayer(year);
+            if (selectedDatasets?.has('rainfall')) renderRainfallLayer(year);
+        } catch (err) {
+            console.warn('applyColorsForDatasetYear: could not render overlays', err);
+        }
+    }
+
+    // Render fishing as proportional circles at country centroids for the given year
+    function renderFishingLayer(year){
+        const meta = loaded.get('fishing');
+        if (!meta) return;
+        const yrMap = meta.byYearMean.get(year) || new Map();
+        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+        if (values.length === 0){
+            fishingLayer.selectAll('circle.fish').remove();
+            legend.select('.legend-title').text('Fishing — ' + year);
+            legend.select('.legend-min').text('');
+            legend.select('.legend-max').text('');
+            legend.select('.legend-bar').style('background', '#eee');
+            return;
+        }
+
+        const minV = d3.min(values);
+        const maxV = d3.max(values);
+        const size = d3.scaleSqrt().domain([minV, maxV]).range([2, 24]);
+
+        // bind circles to country features so they update on projection changes
+        const circles = fishingLayer.selectAll('circle.fish')
+            .data(countries.features, d => d.id);
+
+        const enter = circles.enter().append('circle')
+            .attr('class', 'fish')
+            .attr('fill', 'rgba(0,120,180,0.65)')
+            .attr('stroke', '#044')
+            .attr('stroke-width', 0.4)
+            .attr('r', 0);
+
+        // set initial position for entered elements
+        enter.each(function(d){
+            const c = centroidXY(d);
+            const el = d3.select(this);
+            el.attr('cx', Number.isNaN(c[0]) ? -9999 : c[0]);
+            el.attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
+        });
+
+        // animate enters to target radius
+        enter.transition().duration(300).attr('r', function(d){
+            const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+            return (v == null || Number.isNaN(v)) ? 0 : size(v);
+        });
+
+        // update existing elements
+        circles.transition().duration(300)
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; })
+            .attr('r', function(d){
+                const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+                return (v == null || Number.isNaN(v)) ? 0 : size(v);
+            });
+
+        // exit
+        circles.exit().transition().duration(200).attr('r',0).remove();
+
+        // show fishing overlay
+        fishingLayer.style('display', null);
+
+        // TODO legend update for fishing
+        legend.select('.legend-title').text(`Fishing — ${year}`);
+        // show max at top and min at bottom
+        legend.select('.legend-max').text(maxV.toFixed(0));
+        legend.select('.legend-min').text(minV.toFixed(0));
+        // use a blue gradient (dark at top -> light at bottom) so legend color matches circle fill semantics
+        legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
+
+        // attach circle hover to show tooltip (reuse tooltip format)
+        fishingLayer.selectAll('circle.fish')
+            .on('mouseover', function(event, d){
+                const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
+                const val = valueForFeatureFromDataset(d, year, 'fishing');
+                const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' tonnes';
+                tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Fishing: ${txt} (${year})</div>`);
+            })
+            .on('mousemove', function(event){
+                const [mx, my] = d3.pointer(event, container);
+                const offsetX = 12, offsetY = 12;
+                tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
+            })
+            .on('mouseout', function(){ tooltip.style('display', 'none'); });
+    }
+
+    // Render rainfall as stroke-only rings at country centroids for the given year
+    function renderRainfallLayer(year){
+        const meta = loaded.get('rainfall');
+        if (!meta) return;
+        const yrMap = meta.byYearMean.get(year) || new Map();
+        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+        if (values.length === 0){
+            rainfallLayer.selectAll('circle.rain').remove();
+            legend.select('.legend-title').text('Rainfall — ' + year);
+            legend.select('.legend-min').text('');
+            legend.select('.legend-max').text('');
+            legend.select('.legend-bar').style('background', '#eee');
+            return;
+        }
+
+        const minV = d3.min(values);
+        const maxV = d3.max(values);
+        const radius = d3.scaleSqrt().domain([minV, maxV]).range([6, 34]);
+        const strokeW = d3.scaleLinear().domain([minV, maxV]).range([1.2, 3.2]);
+
+        const halos = rainfallLayer.selectAll('circle.rain-halo')
+            .data(countries.features, d => d.id);
+
+        const halosEnter = halos.enter().append('circle')
+            .attr('class','rain-halo')
+            .attr('fill','none')
+            .attr('stroke','#ffffff')
+            .attr('stroke-opacity',0.85)
+            .attr('r',0)
+            .attr('stroke-linecap','round')
+            .attr('stroke-linejoin','round');
+
+        halosEnter.each(function(d){ const c = centroidXY(d); const el=d3.select(this); el.attr('cx', Number.isNaN(c[0])?-9999:c[0]).attr('cy', Number.isNaN(c[1])?-9999:c[1]); });
+
+        halosEnter.transition().duration(300).attr('r', function(d){
+            const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+            return (v==null||Number.isNaN(v))?0:radius(v);
+        }).attr('stroke-width', function(d){
+            const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
+            return (v==null||Number.isNaN(v))?0:strokeW(v)+1.8;
+        });
+
+        halos.transition().duration(300).attr('cx', function(d){ const c=centroidXY(d); return Number.isNaN(c[0])?-9999:c[0]; }).attr('cy', function(d){ const c=centroidXY(d); return Number.isNaN(c[1])?-9999:c[1]; }).attr('r', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:radius(v); }).attr('stroke-width', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:strokeW(v)+1.8; });
+
+        halos.exit().transition().duration(200).attr('r',0).remove();
+
+        const circles = rainfallLayer.selectAll('circle.rain')
+            .data(countries.features, d => d.id);
+
+        const enter = circles.enter().append('circle')
+            .attr('class', 'rain')
+            .attr('fill', 'none')
+            .attr('stroke', '#ff4500')
+            .attr('stroke-opacity', 0.96)
+            .attr('stroke-linecap', 'round')
+            .attr('stroke-linejoin', 'round')
+            .attr('stroke-width', 0)
+            .attr('r', 0);
+
+        enter.each(function(d){ const c = centroidXY(d); const el=d3.select(this); el.attr('cx', Number.isNaN(c[0])?-9999:c[0]).attr('cy', Number.isNaN(c[1])?-9999:c[1]); });
+
+        enter.transition().duration(300).attr('r', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:radius(v); }).attr('stroke-width', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:strokeW(v); });
+
+        circles.transition().duration(300).attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; }).attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; }).attr('r', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:radius(v); }).attr('stroke-width', function(d){ const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || '')); return (v==null||Number.isNaN(v))?0:strokeW(v); });
+
+        circles.exit().transition().duration(200).attr('r',0).remove();
+
+        rainfallLayer.style('display', null);
+
+        legend.select('.legend-title').text(`Rainfall — ${year}`);
+        legend.select('.legend-max').text(maxV.toFixed(0));
+        legend.select('.legend-min').text(minV.toFixed(0));
+        legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, #ff9f57, #fff7ec)');
+
+        // attach hover tooltip to the visible rings (use the colored ring selection)
+        rainfallLayer.selectAll('circle.rain')
+            .on('mouseover', function(event, d){
+                const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
+                const val = valueForFeatureFromDataset(d, year, 'rainfall');
+                const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' mm';
+                tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Rainfall: ${txt} (${year})</div>`);
+            })
+            .on('mousemove', function(event){ const [mx, my] = d3.pointer(event, container); const offsetX = 12, offsetY = 12; tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`); })
+            .on('mouseout', function(){ tooltip.style('display', 'none'); });
     }
 
     // attach hover handlers to paths to show the tooltip using cached data
@@ -311,18 +549,19 @@ const createWorldMap = async () => {
                 const dsKey2 = ds.key;
                 const meta = loaded.get(dsKey2);
                 const latestForDs = meta?.years?.at(-1) ?? null;
-                const yearForLookup2 = (dsKey2 === currentDatasetKey) ? (currentYear ?? latestForDs) : latestForDs;
-                    let val2 = null;
-                    if (yearForLookup2 !== null && yearForLookup2 !== undefined) {
-                        val2 = valueForFeatureFromDataset(d, yearForLookup2, dsKey2);
-                    }
+                // prefer the externally selected year when present
+                const lookupYear = (currentYear !== null && currentYear !== undefined) ? currentYear : latestForDs;
+                let val2 = null;
+                if (lookupYear !== null && lookupYear !== undefined) {
+                    val2 = valueForFeatureFromDataset(d, lookupYear, dsKey2);
+                }
                 const hasVal = val2 != null && !Number.isNaN(val2);
                 const valText2 = hasVal ? Number(val2).toFixed(2) : 'No data';
-                const displayYear = yearForLookup2 ?? 'n/a';
+                const displayYear = lookupYear ?? 'n/a';
                 if (dsKey2 === currentDatasetKey){
-                        parts.push(`<div style="font-weight:600">${ds.label}: ${valText2} <span style="opacity:0.7">(${displayYear})</span></div>`);
+                    parts.push(`<div style="font-weight:600">${ds.label}: ${valText2} <span style="opacity:0.7">(${displayYear})</span></div>`);
                 } else {
-                        parts.push(`<div style="opacity:0.95">${ds.label}: ${valText2} <span style="opacity:0.6">(${displayYear})</span></div>`);
+                    parts.push(`<div style="opacity:0.95">${ds.label}: ${valText2} <span style="opacity:0.6">(${displayYear})</span></div>`);
                 }
             }
             tooltip.style('display', 'block').html(parts.join(''));
@@ -336,21 +575,6 @@ const createWorldMap = async () => {
             tooltip.style('display', 'none');
         });
 
-    // selection handler: assume datasets are already loaded in `loaded`.
-    // On change, simply switch the visualization to the selected dataset using cached data.
-    // If the dataset isn't present in the cache, fall back to loading it.
-    selector.on('change', (event) => {
-        const k = event.target.value;
-        currentDatasetKey = k;
-        const meta = loaded.get(k);
-        if (meta && Array.isArray(meta.years) && meta.years.length){
-            const latest = meta.years.at(-1) ?? null;
-            if (latest != null) applyColorsForDatasetYear(k, latest);
-        } else {
-            // fallback: dataset not cached yet — load it (keeps backwards compatibility)
-            loadDataset(k);
-        }
-    });
 
     // Preload all datasets (without applying colors), then apply the default dataset once ready.
     (async () => {
@@ -359,41 +583,121 @@ const createWorldMap = async () => {
             return null;
         }));
         await Promise.all(preloadPromises);
-        // after preloading, apply the default dataset's latest year
+        // after preloading, choose a sensible default year:
+        // prefer the latest year that is present in temperature, rainfall and fishing.
+        const requiredKeys = ['temperature','rainfall','fishing'];
+        const yearSets = requiredKeys.map(k => {
+            const m = loaded.get(k);
+            return (m && Array.isArray(m.years)) ? new Set(m.years) : new Set();
+        });
+
+        // compute intersection of year sets
+        let intersectionYears = [];
+        if (yearSets.length && Array.from(yearSets).every(s => s.size > 0)){
+            const base = Array.from(yearSets[0]);
+            intersectionYears = base.filter(y => yearSets.slice(1).every(s => s.has(y))).map(Number);
+        }
+
+        let chosenYear = null;
+        if (intersectionYears.length){
+            chosenYear = Math.max(...intersectionYears);
+        }
+
+        // fallback: choose latest available year from the first dataset if no intersection found
         const defaultKey = DATASETS[0]?.key;
-        if (defaultKey){
+        if (chosenYear == null){
             const meta0 = loaded.get(defaultKey);
-            if (meta0 && Array.isArray(meta0.years) && meta0.years.length){
-                const latest = meta0.years.at(-1) ?? null;
-                if (latest != null) {
-                    currentDatasetKey = defaultKey;
-                    applyColorsForDatasetYear(defaultKey, latest);
-                }
+            const latest = meta0?.years?.at(-1) ?? null;
+            chosenYear = latest;
+        }
+
+        // apply default dataset selection and the chosen year
+        if (defaultKey){
+            selectedDatasets.add(defaultKey);
+            const chk = document.getElementById(`dataset-toggle-${defaultKey}`);
+            if (chk) chk.checked = true;
+            if (chosenYear !== null && chosenYear !== undefined){
+                currentDatasetKey = defaultKey;
+                // ensure currentYear is set so tooltip and external sync use it
+                currentYear = chosenYear;
+                applyColorsForDatasetYear(defaultKey, chosenYear);
             } else {
-                // fallback: if preload didn't load it, load normally and apply
                 await loadDataset(defaultKey, { apply: true });
+            }
+        }
+        const fishingKey = 'fishing';
+        if (!selectedDatasets.has(fishingKey)) selectedDatasets.add(fishingKey);
+        const fishingChk = document.getElementById(`dataset-toggle-${fishingKey}`);
+        if (fishingChk) fishingChk.checked = true;
+        if (chosenYear !== null && chosenYear !== undefined){
+            try {
+                renderFishingLayer(chosenYear);
+            } catch (err) {
+                console.warn('Failed to render fishing overlay for default year', err);
+            }
+        }
+
+        const rainfallKey = 'rainfall';
+        if (!selectedDatasets.has(rainfallKey)) selectedDatasets.add(rainfallKey);
+        const rainfallChk = document.getElementById(`dataset-toggle-${rainfallKey}`);
+        if (rainfallChk) rainfallChk.checked = true;
+        if (chosenYear !== null && chosenYear !== undefined){
+            try {
+                renderRainfallLayer(chosenYear);
+            } catch (err) {
+                console.warn('Failed to render rainfall overlay for default year', err);
             }
         }
     })();
 
     // expose updater that applies to the currently selected dataset
+    // and to active overlays (e.g. fishing) when visible.
+    // This ensures external controls (timeline) can change the year
     globalThis.updateMapYear = (year) => {
+        // record the externally requested year for tooltips and future lookups
+        currentYear = year;
+
+        // update the main choropleth
         if (currentDatasetKey) applyColorsForDatasetYear(currentDatasetKey, year);
+
+        try {
+            const fishingVisible = fishingLayer.style('display') !== 'none';
+            if (loaded.has('fishing') && (fishingVisible || currentDatasetKey === 'fishing')) renderFishingLayer(year);
+            const rainfallVisible = rainfallLayer.style('display') !== 'none';
+            if (loaded.has('rainfall') && (rainfallVisible || currentDatasetKey === 'rainfall')) renderRainfallLayer(year);
+        } catch (err) {
+            console.warn('updateMapYear: failed to update fishing overlay', err);
+        }
     };
 
     // Setup zoom behaviour
     const zoom = d3.zoom()
-        .scaleExtent([1, 8]) // allow zoom between 1x and 8x (Maybe we can offer to the user a menu to set zoom level?)
+        .scaleExtent([1, 8]) // allow zoom between 1x and 8x
         .filter((event) => {
-            return event.type === 'wheel' || event.type === 'touchstart' || event.type === 'touchmove';
+            if (!event) return true;
+            return event.type !== 'wheel';
         })
         .on('zoom', (event) => {
-            // apply transform to group for zooming
             mapGroup.attr('transform', event.transform);
         });
 
+    svg.node().addEventListener('wheel', (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+        e.preventDefault();
+        const delta = -e.deltaY;
+
+        const factor = Math.pow(1.006, delta);
+        const center = [width / 2, height / 2];
+        const t = d3.zoomTransform(svg.node());
+        let newK = t.k * factor;
+        newK = Math.max(1, Math.min(8, newK));
+        svg.transition().duration(120).call(zoom.scaleTo, newK, center);
+    }, { passive: false });
+
     // Attach zoom to svg
     svg.call(zoom);
+    // remove d3.zoom's built-in dblclick handler
+    svg.on('dblclick.zoom', null);
 
     // Double-click resets zoom transform AND the projection rotation (scroll)
     svg.on('dblclick', () => {
@@ -401,6 +705,18 @@ const createWorldMap = async () => {
         projection.rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE, 0]);
         // redraw visible paths with the reset projection
         mapGroup.selectAll('path').attr('d', pathGenerator);
+        // update fishing circles after projection reset so they remain at centroids
+        fishingLayer.selectAll('circle.fish')
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
+        // update rainfall rings and halos as well so they follow projection/drag
+        rainfallLayer.selectAll('circle.rain, circle.rain-halo')
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
+        // update rainfall rings/halos as well on reset
+        rainfallLayer.selectAll('circle.rain, circle.rain-halo')
+            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
         svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
     });
 
@@ -428,13 +744,21 @@ const createWorldMap = async () => {
             let lambda = dragStartRotate[0] + dx * sensitivityX;
             let phi = (dragStartRotate[1] || 0) - dy * sensitivityY;
             // clamp phi to avoid flipping the globe
-            const PHI_LIMIT = 90; 
+            const PHI_LIMIT = 90;
             phi = Math.max(-PHI_LIMIT, Math.min(PHI_LIMIT, phi));
 
             projection.rotate([lambda, phi, 0]);
 
             // update all paths
             mapGroup.selectAll('path').attr('d', pathGenerator);
+            // also update fishing circles positions to follow the rotated projection
+            fishingLayer.selectAll('circle.fish')
+                .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+                .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
+            // and update rainfall rings and halos so they follow the rotated projection as well
+            rainfallLayer.selectAll('circle.rain, circle.rain-halo')
+                .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+                .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
         })
         .on('end', () => {
             setDraggingCursor(false);

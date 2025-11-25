@@ -1,5 +1,10 @@
 :root {
     font-size: 16px;
+    /* layout constants so we can compute available content height exactly */
+    --header-height: 56px;
+    --footer-height: 44px;
+    --timeline-height: 140px;
+    --map-timeline-gap: 60px;
 
 }
 
@@ -16,28 +21,30 @@ html, body {
 }
 
 /* Header Region */
-.main-header {
-    position: fixed;
-    top: 0;
+
+.content {
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    z-index: 1000;
+    /* compute content height as viewport minus fixed header and footer */
+    height: calc(100vh - var(--header-height) - var(--footer-height));
 }
-
-
 /* World Map region */
-/* TODO: maybe Refactir world map into his own css file */
 .world-map-chart-wrapper {
-    width: 100vw;
-    height: 100vh;
-    position: absolute;
-    top: 0;
-    left: 0;
+    width: 100%;
+    /* take remaining height after reserving timeline height */
+    /* subtract an additional gap so the timeline has breathing room */
+    height: calc(100% - var(--timeline-height) - var(--map-timeline-gap));
+    flex: none;
+    position: relative;
+    margin-bottom: var(--map-timeline-gap);
 }
 
-#world-map-chart svg {
+#timeline-chart {
     width: 100%;
-    height: 100%;
-    display: block;
+    height: var(--timeline-height);
+    flex: none;
+    position: relative;
 }
 
 .main-headline {
@@ -47,13 +54,26 @@ html, body {
 }
 
 
+.main-header {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+}
+
 /* footer region */
 .main-footer {
     position: fixed;
     bottom: 0;
     width: 100%;
+    height: var(--footer-height);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
-    padding: 0.5rem 0;
     background-color: #f0f0f0;
     border-top: 1px solid #ccc;
 }
