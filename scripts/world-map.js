@@ -8,7 +8,7 @@ const WORLD_MAP_PROJECTION_OFFSET_LATITUDE = 0;
 const WORLD_MAP_SCALE_FACTOR = 160;
 
 const WORLD_MAP_ATLAS_URL = "https://unpkg.com/world-atlas@2/countries-110m.json";
-const COUNTRY_FILL_COLOR = "#cce5df";
+const COUNTRY_FILL_COLOR = "#eee";
 const COUNTRY_STROKE_COLOR = "#333";
 
 
@@ -106,7 +106,7 @@ const createWorldMap = async () => {
     // Path generator that uses the mutable projection
     const pathGenerator = d3.geoPath().projection(projection);
 
-    // helper to compute screen centroid robustly: use geographic centroid then project
+    // helper to compute screen centroid robustly:
     function centroidXY(feature){
         const g = d3.geoCentroid(feature);
         if (!g || !Number.isFinite(g[0]) || !Number.isFinite(g[1])) return [Number.NaN, Number.NaN];
@@ -120,7 +120,7 @@ const createWorldMap = async () => {
          .data(countries.features)
          .join("path")
          .attr("d", pathGenerator)
-         .attr("fill", '#eee')
+         .attr("fill", COUNTRY_FILL_COLOR)
          .attr("stroke", COUNTRY_STROKE_COLOR)
          .attr('stroke-width', 0.5)
          .attr('vector-effect', 'non-scaling-stroke');
@@ -134,14 +134,12 @@ const createWorldMap = async () => {
     const toolbar = d3.select(container)
         .insert('div', () => svgNode)
         .attr('id', 'map-dataset-toolbar')
-        // center the toolbar and add spacing so it doesn't overlap other page items
         .style('display', 'flex')
         .style('justify-content', 'center')
         .style('align-items', 'center')
         .style('gap', '8px')
-    .style('width', '100%')
-    // add more top margin so the toolbar doesn't overlap the page title
-    .style('margin', '40px 0 8px')
+        .style('width', '100%')
+        .style('margin', '40px 0 8px')
         .style('font-family', 'sans-serif')
         .style('font-size', '13px');
 
@@ -150,9 +148,9 @@ const createWorldMap = async () => {
         .style('min-width', '220px');
 
     const DATASETS = [
-        { key: 'temperature', label: 'Temperature', path: 'python_scripts/data/temperature_by_country.csv' },
-        { key: 'rainfall', label: 'Rainfall', path: 'python_scripts/data/rainfall_by_country.csv' },
-        { key: 'fishing', label: 'Fishing', path: 'python_scripts/data/fishing_by_country_year.csv' },
+        { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv' },
+        { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
+        { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
         { key: 'oni', label: 'ONI', path: 'python_scripts/data/oni_monthly.csv' }
     ];
 
@@ -165,7 +163,6 @@ const createWorldMap = async () => {
         .append('div')
         .attr('id', 'map-legend')
         .style('position', 'absolute')
-        // position to the right, centered vertically
         .style('right', '12px')
         .style('top', '50%')
         .style('transform', 'translateY(-50%)')
@@ -194,7 +191,7 @@ const createWorldMap = async () => {
     // min label under the bar
     legend.append('div').attr('class','legend-min').style('font-size','12px').style('margin-top','6px').text('');
 
-    // tooltip (hidden by default) — will show country name and value for current dataset/year
+    // tooltip will show country name and value for current dataset/year
     const tooltip = d3.select(container)
         .append('div')
         .attr('id', 'map-tooltip')
@@ -211,11 +208,10 @@ const createWorldMap = async () => {
     // store loaded datasets: key -> { byYearMean: Map(year -> Map(key->value)), years: [] }
     const loaded = new Map();
     let currentDatasetKey = null;
-    let currentYear = null; // last-applied year for the current visualization
+    let currentYear = null;
 
     // parse raw CSV rows into a uniform row shape
     // helper functions moved to module scope
-
     async function loadDataset(key, {apply=true} = {}){
         const ds = DATASETS.find(d=>d.key===key);
         if (!ds) return;
@@ -274,7 +270,7 @@ const createWorldMap = async () => {
         const yrMap = meta.byYearMean.get(year) || new Map();
         const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
         if (values.length === 0){
-            mapGroup.selectAll('path').attr('fill', '#eee');
+            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
             // clear legend
             legend.select('.legend-title').text('');
             legend.select('.legend-min').text('');
@@ -288,7 +284,7 @@ const createWorldMap = async () => {
         // if we're rendering fishing, don't recolor countries: instead render circles
         if (key === 'fishing'){
             // mute country fills
-            mapGroup.selectAll('path').attr('fill', '#eee');
+            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
             renderFishingLayer(year);
         } else {
             mapGroup.selectAll('path')
@@ -315,7 +311,6 @@ const createWorldMap = async () => {
         }
         const gradCss = `linear-gradient(to bottom, ${gradColors.join(',')})`;
         legend.select('.legend-bar').style('background', gradCss);
-        // show max at top and min at bottom
         legend.select('.legend-max').text(maxV.toFixed(2));
         legend.select('.legend-min').text(minV.toFixed(2));
     }
@@ -373,35 +368,35 @@ const createWorldMap = async () => {
                 return (v == null || Number.isNaN(v)) ? 0 : size(v);
             });
 
-        // exit
-        circles.exit().transition().duration(200).attr('r',0).remove();
+            // exit
+            circles.exit().transition().duration(200).attr('r',0).remove();
 
-        // show fishing overlay
-        fishingLayer.style('display', null);
+            // show fishing overlay
+            fishingLayer.style('display', null);
 
-    // update legend for fishing (simple min/max + title)
-    legend.select('.legend-title').text(`Fishing — ${year}`);
-    // show max at top and min at bottom
-    legend.select('.legend-max').text(maxV.toFixed(0));
-    legend.select('.legend-min').text(minV.toFixed(0));
-    // use a blue gradient (dark at top -> light at bottom) so legend color matches circle fill semantics
-    legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
+            // TODO legend update for fishing
+            legend.select('.legend-title').text(`Fishing — ${year}`);
+            // show max at top and min at bottom
+            legend.select('.legend-max').text(maxV.toFixed(0));
+            legend.select('.legend-min').text(minV.toFixed(0));
+            // use a blue gradient (dark at top -> light at bottom) so legend color matches circle fill semantics
+            legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
 
-        // attach circle hover to show tooltip (reuse tooltip format)
-        fishingLayer.selectAll('circle.fish')
-            .on('mouseover', function(event, d){
-                const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
-                const val = valueForFeatureFromDataset(d, year, 'fishing');
-                const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' tonnes';
-                tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Fishing: ${txt} (${year})</div>`);
-            })
-            .on('mousemove', function(event){
-                const [mx, my] = d3.pointer(event, container);
-                const offsetX = 12, offsetY = 12;
-                tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
-            })
-            .on('mouseout', function(){ tooltip.style('display', 'none'); });
-    }
+            // attach circle hover to show tooltip (reuse tooltip format)
+            fishingLayer.selectAll('circle.fish')
+                .on('mouseover', function(event, d){
+                    const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
+                    const val = valueForFeatureFromDataset(d, year, 'fishing');
+                    const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' tonnes';
+                    tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Fishing: ${txt} (${year})</div>`);
+                })
+                .on('mousemove', function(event){
+                    const [mx, my] = d3.pointer(event, container);
+                    const offsetX = 12, offsetY = 12;
+                    tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
+                })
+                .on('mouseout', function(){ tooltip.style('display', 'none'); });
+        }
 
     // attach hover handlers to paths to show the tooltip using cached data
     mapGroup.selectAll('path')
@@ -414,18 +409,19 @@ const createWorldMap = async () => {
                 const dsKey2 = ds.key;
                 const meta = loaded.get(dsKey2);
                 const latestForDs = meta?.years?.at(-1) ?? null;
-                const yearForLookup2 = (dsKey2 === currentDatasetKey) ? (currentYear ?? latestForDs) : latestForDs;
-                    let val2 = null;
-                    if (yearForLookup2 !== null && yearForLookup2 !== undefined) {
-                        val2 = valueForFeatureFromDataset(d, yearForLookup2, dsKey2);
-                    }
+                // prefer the externally selected year when present
+                const lookupYear = (currentYear !== null && currentYear !== undefined) ? currentYear : latestForDs;
+                let val2 = null;
+                if (lookupYear !== null && lookupYear !== undefined) {
+                    val2 = valueForFeatureFromDataset(d, lookupYear, dsKey2);
+                }
                 const hasVal = val2 != null && !Number.isNaN(val2);
                 const valText2 = hasVal ? Number(val2).toFixed(2) : 'No data';
-                const displayYear = yearForLookup2 ?? 'n/a';
+                const displayYear = lookupYear ?? 'n/a';
                 if (dsKey2 === currentDatasetKey){
-                        parts.push(`<div style="font-weight:600">${ds.label}: ${valText2} <span style="opacity:0.7">(${displayYear})</span></div>`);
+                    parts.push(`<div style="font-weight:600">${ds.label}: ${valText2} <span style="opacity:0.7">(${displayYear})</span></div>`);
                 } else {
-                        parts.push(`<div style="opacity:0.95">${ds.label}: ${valText2} <span style="opacity:0.6">(${displayYear})</span></div>`);
+                    parts.push(`<div style="opacity:0.95">${ds.label}: ${valText2} <span style="opacity:0.6">(${displayYear})</span></div>`);
                 }
             }
             tooltip.style('display', 'block').html(parts.join(''));
@@ -480,8 +476,23 @@ const createWorldMap = async () => {
     })();
 
     // expose updater that applies to the currently selected dataset
+    // and to active overlays (e.g. fishing) when visible.
+    // This ensures external controls (timeline) can change the year
     globalThis.updateMapYear = (year) => {
+        // record the externally requested year for tooltips and future lookups
+        currentYear = year;
+
+        // update the main choropleth
         if (currentDatasetKey) applyColorsForDatasetYear(currentDatasetKey, year);
+
+        try {
+            const fishingVisible = fishingLayer.style('display') !== 'none';
+            if (loaded.has('fishing') && (fishingVisible || currentDatasetKey === 'fishing')) {
+                renderFishingLayer(year);
+            }
+        } catch (err) {
+            console.warn('updateMapYear: failed to update fishing overlay', err);
+        }
     };
 
     // Setup zoom behaviour
