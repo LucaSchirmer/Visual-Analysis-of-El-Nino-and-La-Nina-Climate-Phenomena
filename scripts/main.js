@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   if (document.querySelector("#world-map-chart")) {
     createWorldMap();
+    createTimelineScale();
   } 
   
   // Si on est sur la page du scatter plot
