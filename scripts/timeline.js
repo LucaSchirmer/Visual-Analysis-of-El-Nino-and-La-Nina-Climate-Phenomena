@@ -113,7 +113,20 @@ const createTimelineScale = async () => {
     return x;
 };
 
-// TO BE REPLACED BY CALL TO MAP
 function onClickEvent(event, d){
-    console.log("Clicked strong event:", d.date, d.phase, d.intensity);
+    // visually mark selected event
+    d3.selectAll('.strong-event circle').classed('timeline-selected', false);
+    d3.select(this).classed('timeline-selected', true);
+
+    const year = d.date.getFullYear();
+    // call map updater if available
+    if (typeof globalThis.updateMapYear === 'function'){
+        try {
+            globalThis.updateMapYear(year);
+        } catch (err){
+            console.warn('updateMapYear failed', err);
+        }
+    } else {
+        console.log('Clicked strong event:', d.date, d.phase, d.intensity, '-> year', year);
+    }
 }
