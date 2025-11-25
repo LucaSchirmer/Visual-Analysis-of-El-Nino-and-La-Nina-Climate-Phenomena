@@ -23,21 +23,24 @@ html, body {
     z-index: 1000;
 }
 
-
+.content {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100vh;
+}
 /* World Map region */
 /* TODO: maybe Refactir world map into his own css file */
 .world-map-chart-wrapper {
-    width: 100vw;
-    height: 100vh;
-    position: absolute;
-    top: 0;
-    left: 0;
+    width: 100%;
+    flex : 4;
+    position: relative;
 }
 
-#world-map-chart svg {
+#timeline-chart {
     width: 100%;
-    height: 100%;
-    display: block;
+    flex : 1;
+    position: relative;
 }
 
 .main-headline {
