@@ -9,7 +9,7 @@ const createTimelineScale = async () => {
         .attr("height", height);
     
     // Define the window/frame dimensions
-    const margin = { top: 40, right: 60, bottom: 60, left: 60 };
+    const margin = { top: 0, right: 60, bottom: 60, left: 60 };
     const frameWidth = width - margin.left - margin.right;
     const frameHeight = height - margin.top - margin.bottom;
     
@@ -39,7 +39,7 @@ const createTimelineScale = async () => {
     
     // Scale within the frame
     const x = d3.scaleTime()
-        .domain(d3.extent(strongEvents.map(d => d.date)))
+        .domain(d3.extent(data.map(d => d.date)))
         .range([40, frameWidth - 40]);
     
     const regularYears = d3.timeYear.every(5).range(
@@ -78,16 +78,16 @@ const createTimelineScale = async () => {
         .append("g")
         .attr("class", "strong-event")
         .attr("transform", d => `translate(${x(d.date)}, ${frameHeight / 2})`);
-
     
     // Event markers
-    eventGroup.append("circle")
-        .attr("r", 8)
+    eventGroup.append("rect")
+        .attr("x", -2)
+        .attr("y", -10)
+        .attr("width", 4)
+        .attr("height", 20)
+        .attr("rx", 2)
         .attr("fill", d => d.phase === "El Niño" ? "#ff6a6a" : "#6aa0ff")
-        .attr("stroke", "#fff")
-        .attr("stroke-width", 2.5)
         .attr("cursor", "pointer")
-        .style("filter", "url(#glow)")
         .on("click", onClickEvent);
     
     // Add labels on hover with month and year
@@ -99,34 +99,84 @@ const createTimelineScale = async () => {
             });
             return `${d.phase} (${d.intensity}) — ${monthYear}`;
         });
+
+    // Create cursor data object
+    const cursorData = { x: x(data[0].date) };
     
-    // Add a title to the timeline
-    svg.append("text")
-        .attr("x", width / 2)
-        .attr("y", 25)
-        .attr("text-anchor", "middle")
-        .attr("font-size", "16px")
-        .attr("font-weight", "600")
+    // Cursor handle (draggable circle)
+    const cursorHandle = window.append("circle")
+        .datum(cursorData)
+        .attr("class", "cursor-handle")
+        .attr("cx", d => d.x)
+        .attr("r", 10)
+        .attr("cy", frameHeight / 2)
         .attr("fill", "#333")
-        .text("Strong Climate Events Timeline");
+        .attr("stroke", "#fff")
+        .attr("stroke-width", 2)
+        .attr("cursor", "grab");
+    
+    // Helper function to get data point from x position
+    function getDataAtPosition(xPos) {
+        const date = x.invert(xPos);
+        const bisect = d3.bisector(d => d.date).left;
+        const index = bisect(data, date);
+        return data[Math.min(index, data.length - 1)];
+    }
+    
+    function dragstarted(event, d) {
+        d3.select(this).raise().attr("stroke", "black");
+    }
+
+    function dragged(event, d) {
+        // Clamp position to stay within timeline bounds
+        const clampedX = Math.max(40, Math.min(frameWidth - 40, event.x));
+        d3.select(this).attr("cx", d.x = clampedX);
+    }
+
+    function dragended(event, d) {
+        d3.select(this).attr("stroke", null);
+        const dataPoint = getDataAtPosition(d.x);
+        onSlidedCursor(dataPoint);
+    }
+
+    const drag = d3.drag()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended);
+    
+    cursorHandle.call(drag);
     
     return x;
 };
 
-function onClickEvent(event, d){
+function onClickEvent(event, d) {
     // visually mark selected event
     d3.selectAll('.strong-event circle').classed('timeline-selected', false);
     d3.select(this).classed('timeline-selected', true);
 
     const year = d.date.getFullYear();
     // call map updater if available
-    if (typeof globalThis.updateMapYear === 'function'){
+    if (typeof globalThis.updateMapYear === 'function') {
         try {
             globalThis.updateMapYear(year);
-        } catch (err){
+        } catch (err) {
             console.warn('updateMapYear failed', err);
         }
     } else {
         console.log('Clicked strong event:', d.date, d.phase, d.intensity, '-> year', year);
+    }
+}
+
+function onSlidedCursor(dataPoint) {
+    const year = dataPoint.date.getFullYear();
+    // call map updater if available
+    if (typeof globalThis.updateMapYear === 'function') {
+        try {
+            globalThis.updateMapYear(year);
+        } catch (err) {
+            console.warn('updateMapYear failed', err);
+        }
+    } else {
+        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity, '-> year', year);
     }
 }
