@@ -74,8 +74,19 @@ function aggregateRows(rows){
 
 const createWorldMap = async () => {
     const container = document.getElementById("world-map-chart");
+    // Respect the page navbar and footer heights if present.
+    // Try to read actual elements, otherwise fall back to sensible defaults.
+    const navElem = document.querySelector('nav, .navbar, #navbar, header');
+    const footerElem = document.querySelector('footer, .footer, #footer, .site-footer');
+    // Navbar fallback: reserve 7vh (7% of viewport height) so the map is not
+    // hidden behind a top navigation bar when an explicit navbar element is absent.
+    const navbarOffset = navElem ? Math.round(navElem.getBoundingClientRect().height) : Math.round(window.innerHeight * 0.07);
+    // Footer fallback is 35px as requested — this reserves 35px at the bottom of the page
+    const footerOffset = footerElem ? Math.round(footerElem.getBoundingClientRect().height) : 35; // px fallback (user-specified)
+
     const width = container.clientWidth;
-    const height = container.clientHeight;
+    // Subtract navbar and footer offsets from available container height, with a sensible minimum
+    const height = Math.max(120, container.clientHeight - navbarOffset - footerOffset);
 
     // load country data to get geo features
     const countries = await loadCountries();
@@ -212,6 +223,16 @@ const createWorldMap = async () => {
         .append('div')
         .attr('id', 'map-legend')
         .style('position', 'absolute')
+        /*
+        *     // raise the legend a bit to avoid overlapping the fixed footer
+    // position it just above the reserved footer area (footerOffset fallback is 35px)
+    .style('bottom', (footerOffset + 8) + 'px')
+        .style('left', '50%')
+        .style('transform', 'translateX(-50%)')
+        *
+        *
+        * */
+
         .style('right', '12px')
         .style('top', '50%')
         .style('transform', 'translateY(-50%)')
@@ -648,6 +669,39 @@ const createWorldMap = async () => {
                 console.warn('Failed to render rainfall overlay for default year', err);
             }
         }
+
+        // If the page contains a navbar dataset switch (index.html), populate and wire it here.
+        const navSwitch = document.getElementById('nav-dataset-switch');
+        if (navSwitch) {
+            // Clear any existing children
+            navSwitch.innerHTML = '';
+            DATASETS.forEach(ds => {
+                const btn = document.createElement('button');
+                btn.textContent = ds.label;
+                btn.type = 'button';
+                btn.dataset.key = ds.key;
+                btn.className = (ds.key === currentDatasetKey) ? 'selected' : '';
+                btn.addEventListener('click', async () => {
+                    // update selected visual state
+                    navSwitch.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+                    btn.classList.add('selected');
+                    // load and apply dataset
+                    currentDatasetKey = ds.key;
+                    // prefer cached meta if present
+                    const meta = loaded.get(ds.key);
+                    if (meta && Array.isArray(meta.years) && meta.years.length){
+                        const latest = meta.years.at(-1);
+                        applyColorsForDatasetYear(ds.key, latest);
+                    } else {
+                        await loadDataset(ds.key, { apply: true });
+                    }
+                    // also update the toolbar select if present (keeps UI in sync)
+                    const sel = document.getElementById('map-dataset-select');
+                    if (sel) sel.value = ds.key;
+                });
+                navSwitch.appendChild(btn);
+            });
+        }
     })();
 
     // expose updater that applies to the currently selected dataset
@@ -771,8 +825,6 @@ const createWorldMap = async () => {
     bg.style('cursor', null);
     bg.call(drag);
 }
-
-
 
 const loadCountries = async () => {
     // Make sure to include topojson-client.js if using TopoJSON
