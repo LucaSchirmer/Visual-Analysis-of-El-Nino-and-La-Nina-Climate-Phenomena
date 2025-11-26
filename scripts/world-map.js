@@ -246,6 +246,68 @@ function setupTooltip(container) {
         .style('z-index', 2000);
 }
 
+// Compute a radius scale so that area ∝ value (radius ∝ sqrt(value)).
+function computeRadiusScale(values, sizeConfig = {}) {
+    const { width = 800, height = 400, minRadius = 2, maxRadiusFactor = 1/15 } = sizeConfig;
+    const positive = values.filter(v => v != null && !Number.isNaN(v) && v > 0);
+    if (positive.length === 0) {
+        return d3.scaleSqrt().domain([0, 1]).range([0, minRadius]);
+    }
+    const minV = d3.min(positive);
+    const maxV = d3.max(positive);
+    const viewportMin = Math.min(width, height);
+    const rMax = Math.max(minRadius, Math.min(Math.round(viewportMin * maxRadiusFactor), 80));
+    const domainMin = Math.min(minV, maxV * 0.01);
+    return d3.scaleSqrt().domain([domainMin, maxV]).range([Math.max(0.75, minRadius), rMax]);
+}
+
+function createSizeLegend(container, scale, values, labelFmt = v => (v == null ? 'n/a' : Number(v).toLocaleString())) {
+    const sel = d3.select(container);
+
+    sel.select('.fishing-size-legend').remove();
+
+    const positives = values.filter(v => v != null && !Number.isNaN(v) && v > 0).sort((a,b)=>a-b);
+    if (positives.length === 0) {
+        sel.append('div').attr('class','fishing-size-legend').text('No fishing data');
+        return;
+    }
+
+    // choose three reference points: small (first non-zero), half of max, and max
+    const small = positives[0];
+    const max = positives[positives.length - 1];
+    const halfMax = max / 2;
+    const samples = [ { label: 'Small', value: small }, { label: 'Half max', value: halfMax }, { label: 'Max', value: max } ];
+
+    const legend = sel.append('div').attr('class','fishing-size-legend')
+        .style('display','flex')
+        .style('flex-direction','column')
+        .style('align-items','center')
+        .style('gap','10px')
+        .style('font-size','12px')
+        .style('color','#222')
+        .style('padding-top','6px');
+
+    for (const s of samples) {
+        const r = Math.round(scale(s.value));
+        const pad = 6;
+        const w = Math.max(48, r*2 + pad*2);
+        const h = Math.max(28, r*2 + pad*2);
+        const block = legend.append('div').style('display','flex').style('flex-direction','column').style('align-items','center').style('gap','6px');
+        const svg = block.append('svg').attr('width', w).attr('height', h);
+        svg.append('circle')
+            .attr('cx', w/2)
+            .attr('cy', h/2)
+            .attr('r', r)
+            .attr('fill', 'rgba(0,120,180,0.65)')
+            .attr('stroke', '#044')
+            .attr('stroke-width', 0.4);
+
+        block.append('div').style('font-size','11px').style('color','#333').text(labelFmt(s.value));
+    }
+
+    return legend;
+}
+
 function getValueForFeature(feature, year, metaData) {
     if (!metaData) return null;
     const yrMap = metaData.byYearMean.get(year);
@@ -335,6 +397,53 @@ const createWorldMap = async () => {
             .attr('cx', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[0]) ? -9999 : c[0]; })
             .attr('cy', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[1]) ? -9999 : c[1]; });
     };
+
+    // Draw fishing circles with adaptive radius scale
+    function drawFishingPoints(countriesFeatures, fishingLayer, projection, values, year, meta, width, height, legendContainer) {
+        const scale = computeRadiusScale(values, { width, height, minRadius: 1.5, maxRadiusFactor: 1/18 });
+
+        const circles = fishingLayer.selectAll('circle.fish')
+            .data(countriesFeatures, d => d.id);
+
+        const enter = circles.enter().append('circle')
+            .attr('class','fish')
+            .attr('fill',COLORS.FISHING_FILL)
+            .attr('stroke',COLORS.FISHING_STROKE)
+            .attr('stroke-width',0.4)
+            .attr('r',0)
+            .attr('pointer-events', 'none');
+
+        enter.each(function(d) {
+            const c = getSafeCentroid(d, projection);
+            d3.select(this).attr('cx', Number.isNaN(c[0]) ? -9999 : c[0])
+                           .attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
+        });
+
+        const radiusFor = (d) => {
+            const v = getValueForFeature(d, year, meta);
+            if (v == null || Number.isNaN(v) || v <= 0) return 0;
+            return scale(v);
+        };
+
+        enter.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', radiusFor);
+        circles.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', radiusFor).attr('pointer-events', 'none');
+        circles.exit().transition().duration(200).attr('r', 0).remove();
+        fishingLayer.style('display', null);
+        redrawMapGeometry();
+
+        if (legendContainer) {
+            const $legend = d3.select(legendContainer);
+            // Hide the default legend elements
+            $legend.select('.legend-bar').style('display', 'none');
+            $legend.select('.legend-max').style('display', 'none');
+            $legend.select('.legend-min').style('display', 'none');
+            $legend.select('.legend-title').text('Fishing (tonnes)');
+
+            // Remove previous fishing legend then create the size legend
+            $legend.select('.fishing-size-legend').remove();
+            createSizeLegend(legendContainer, scale, values, v => `${Math.round(v).toLocaleString()} t`);
+        }
+    }
 
     // --- 6. INTERACTION DEFINITIONS ---
 
@@ -427,6 +536,11 @@ const createWorldMap = async () => {
         const meta = appState.loadedData.get(key);
         if (!meta) return;
 
+        d3.select(legend.node()).select('.fishing-size-legend').remove();
+        legend.select('.legend-bar').style('display', null);
+        legend.select('.legend-max').style('display', null);
+        legend.select('.legend-min').style('display', null);
+
         const yrMap = meta.byYearMean.get(year) || new Map();
         const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
 
@@ -471,45 +585,8 @@ const createWorldMap = async () => {
         // --- FISHING VISUALIZATION ---
         } else if (key === 'fishing') {
             countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
-            
-            const minV = d3.min(values);
-            const maxV = d3.max(values);
-            const size = d3.scaleSqrt().domain([minV, maxV]).range([2, 24]);
 
-            const circles = fishingLayer.selectAll('circle.fish')
-                .data(countries.features, d => d.id);
-
-            const enter = circles.enter().append('circle')
-                .attr('class', 'fish')
-                .attr('fill', COLORS.FISHING_FILL)
-                .attr('stroke', COLORS.FISHING_STROKE)
-                .attr('stroke-width', 0.4)
-                .attr('r', 0);
-
-            // Initial placement
-            enter.each(function(d) {
-                const c = getSafeCentroid(d, projection);
-                d3.select(this)
-                    .attr('cx', Number.isNaN(c[0]) ? -9999 : c[0])
-                    .attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
-            });
-
-            const updateRadius = (d) => {
-                const v = getValueForFeature(d, year, meta);
-                return (v == null || Number.isNaN(v)) ? 0 : size(v);
-            };
-
-            enter.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', updateRadius);
-            circles.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', updateRadius);
-            circles.exit().transition().duration(200).attr('r', 0).remove();
-            fishingLayer.style('display', null);
-            
-            redrawMapGeometry(); // Align on year change
-
-            legend.select('.legend-title').text(`Fishing — ${year}`);
-            legend.select('.legend-max').text(maxV.toFixed(0));
-            legend.select('.legend-min').text(minV.toFixed(0));
-            legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
+            drawFishingPoints(countries.features, fishingLayer, projection, values, year, meta, width, height, legend.node());
 
         // --- RAINFALL VISUALIZATION ---
         } else if (key === 'rainfall') {
