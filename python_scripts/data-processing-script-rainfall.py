@@ -67,9 +67,9 @@ if nc_files:
         final_df = final_df.dropna(subset=['country_name'])
 
         # Save to CSV
-        output_path = os.path.join(DATA_DIR, 'rainfall_by_country.csv')
+        output_path = os.path.join(DATA_DIR, 'rainfall_by_country.csv.gz')
         cols_to_save = ['time', 'country_name', 'abbrev', 'rainfall_mm']
-        final_df[cols_to_save].to_csv(output_path, index=False)
+        final_df[cols_to_save].to_csv(output_path, index=False, compression='gzip')
         
         print(f"SUCCESS: Saved rainfall data for {final_df['country_name'].nunique()} countries.")
         print(f"File saved to: {output_path}")
