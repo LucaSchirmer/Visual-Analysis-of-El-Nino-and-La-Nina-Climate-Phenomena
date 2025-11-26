@@ -334,11 +334,6 @@ const createWorldMap = async () => {
         fishingLayer.selectAll('circle.fish')
             .attr('cx', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[0]) ? -9999 : c[0]; })
             .attr('cy', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[1]) ? -9999 : c[1]; });
-
-        // Reposition Rainfall Rings
-        rainfallLayer.selectAll('circle.rain')
-            .attr('cx', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[0]) ? -9999 : c[0]; })
-            .attr('cy', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[1]) ? -9999 : c[1]; });
     };
 
     // --- 6. INTERACTION DEFINITIONS ---
@@ -528,48 +523,19 @@ const createWorldMap = async () => {
                     return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
                 });
 
-            const radius = d3.scaleSqrt().domain([minV, maxV]).range([6, 34]);
-            const strokeW = d3.scaleLinear().domain([minV, maxV]).range([1.2, 3.2]);
+            rainfallLayer.selectAll('*').remove();
+            rainfallLayer.style('display', 'none');
 
-            const updateCircle = (selection) => {
-                selection
-                    .attr('r', d => {
-                        const v = getValueForFeature(d, year, meta);
-                        return (v == null || Number.isNaN(v)) ? 0 : radius(v);
-                    })
-                    .attr('stroke-width', d => {
-                        const v = getValueForFeature(d, year, meta);
-                        return (v == null || Number.isNaN(v)) ? 0 : strokeW(v);
-                    });
-            };
-
-            const circles = rainfallLayer.selectAll('circle.rain').data(countries.features, d => d.id);
-            
-            const enter = circles.enter().append('circle')
-                .attr('class', 'rain')
-                .attr('fill', 'none')
-                .attr('stroke', COLORS.RAINFALL_STROKE)
-                .attr('stroke-opacity', 0.96)
-                .attr('stroke-linecap', 'round')
-                .attr('r', 0);
-
-            enter.each(function(d) {
-                const c = getSafeCentroid(d, projection);
-                d3.select(this).attr('cx', Number.isNaN(c[0]) ? -9999 : c[0])
-                              .attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
-            });
-
-            enter.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).call(updateCircle);
-            circles.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).call(updateCircle);
-            circles.exit().transition().duration(200).attr('r', 0).remove();
-
-            rainfallLayer.style('display', null);
-            redrawMapGeometry(); // Align on year change
-
+            // Update legend to reflect rainfall color scale
             legend.select('.legend-title').text(`Rainfall — ${year}`);
-            legend.select('.legend-max').text(maxV.toFixed(0));
-            legend.select('.legend-min').text(minV.toFixed(0));
-            legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, #ff9f57, #fff7ec)');
+            const stops = 6;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxV + (minV - maxV) * t);
+            });
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(maxV != null ? maxV.toFixed(2) : 'n/a');
+            legend.select('.legend-min').text(minV != null ? minV.toFixed(2) : 'n/a');
             
         // --- STANDARD VISUALIZATION ---
         } else {
