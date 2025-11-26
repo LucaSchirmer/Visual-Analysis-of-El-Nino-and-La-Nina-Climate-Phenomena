@@ -1,4 +1,12 @@
+// NAVBAR code
 document.addEventListener('DOMContentLoaded', () => {
+  const currentPage = window.location.pathname.split('/').pop() || 'index.html';
+  document.querySelectorAll('.main-navigation a').forEach(link => {
+    if (link.getAttribute('href') === currentPage) {
+      link.classList.add('active');
+    }
+  });
+
   console.log("Application chargée");
   
   if (document.querySelector("#world-map-chart")) {

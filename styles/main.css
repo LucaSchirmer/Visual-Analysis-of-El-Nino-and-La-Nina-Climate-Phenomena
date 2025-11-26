@@ -1,8 +1,17 @@
 :root {
     font-size: 16px;
+    /* layout constants so we can compute available content height exactly */
+    --header-height: 7vh;
+    --footer-height: 44px;
+    --timeline-height: 140px;
+    --map-timeline-gap: 60px;
 
+    --color-header-start:       #2f6f4f;
+    --color-header-end:         #3f7a55;
+    --color-header-active:      #333;
+    --color-header-not-active:  #f7f7f7;
 }
-
+    
 * {
     box-sizing: border-box;
     margin: 0;
@@ -16,47 +25,162 @@ html, body {
 }
 
 /* Header Region */
+
+.content {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    /* compute content height as viewport minus fixed header and footer */
+    height: calc(100vh - var(--header-height) - var(--footer-height));
+    margin-top: var(--header-height);
+}
+
+/* MAYBE DELETE LATER*/
 .main-header {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #462;
+    height: 7vh;
+
     position: fixed;
     top: 0;
     width: 100%;
     z-index: 1000;
 }
 
-.content {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    height: 100vh;
+.main-navigation a, .main-header h1 {
+    font-size: 1.5rem;
+    text-decoration: none;
+    color: white;
 }
+
+.main-navigation a {
+  position: relative;
+  transition: color 0.2s ease;
+}
+
+.main-navigation a.active {
+  color: var(--color-header-active);
+  font-weight: 600;
+  font-size: 1.6rem;
+}
+
+.main-navigation ul {
+    display: flex;
+    width: 25vw;
+    height: 100%;
+
+    justify-content: space-around;
+    align-items: center;
+}
+
+.main-navigation ul li {
+  list-style: none;
+}
+
+.main-navigation a.active::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--color-header-active);
+}
+
+
+
+/* Switch element */
+
+.dataset-switch {
+    display: flex;
+    gap: 6px;
+    margin-left: 16px;
+    align-items: center;
+    justify-content: end;
+}
+
+.dataset-switch button {
+    appearance: none;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    background: white;
+    color: #111;
+
+    padding: 6px 10px;
+    margin: 10px;
+
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.dataset-switch button:hover {
+    filter: brightness(0.98);
+}
+
+.dataset-switch button.selected {
+    background: #111;
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
+}
+
+/* Visible focus style for keyboard users */
+.dataset-switch button:focus {
+    outline: 2px solid rgba(0, 123, 255, 0.25);
+    outline-offset: 2px;
+}
+/* end Switch Element */
+/* end Header Region */
+
+
+
 /* World Map region */
-/* TODO: maybe Refactir world map into his own css file */
 .world-map-chart-wrapper {
     width: 100%;
-    flex : 4;
+    /* take remaining height after reserving timeline height */
+    /* subtract an additional gap so the timeline has breathing room */
+    height: calc(100% - var(--timeline-height) - var(--map-timeline-gap));
+    flex: none;
     position: relative;
+    margin-bottom: var(--map-timeline-gap);
 }
 
 #timeline-chart {
     width: 100%;
-    flex : 1;
+    height: var(--timeline-height);
+    flex: none;
     position: relative;
+
+    display: flex;
+    align-content: center;
+    justify-content: center;
 }
 
-.main-headline {
-    font-size: 2rem;
-    text-align: center;
-    margin-bottom: 1rem;
-}
 
+.main-header {
+    position: fixed;
+    top: 0;
+    width: 100%;
+    z-index: 1000;
+    height: var(--header-height);
+    display: flex;
+    align-items: center;
+    padding: 0 1rem;
+    background: linear-gradient(90deg, var(--color-header-start), var(--color-header-end));
+}
 
 /* footer region */
 .main-footer {
     position: fixed;
     bottom: 0;
     width: 100%;
+    height: var(--footer-height);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     text-align: center;
-    padding: 0.5rem 0;
     background-color: #f0f0f0;
     border-top: 1px solid #ccc;
 }
