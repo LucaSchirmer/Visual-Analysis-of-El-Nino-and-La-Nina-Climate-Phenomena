@@ -41,6 +41,11 @@ html, body {
     width: 100%;
     flex : 1;
     position: relative;
+    overflow: visible !important;
+}
+
+#timeline-chart svg {
+    overflow: visible !important;
 }
 
 .main-headline {
