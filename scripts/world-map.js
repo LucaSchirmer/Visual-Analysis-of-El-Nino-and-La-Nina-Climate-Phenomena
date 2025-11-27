@@ -142,6 +142,36 @@ function aggregateRows(rows) {
     return { byYearMean, years };
 }
 
+// Fill remaining NaNs by nearest-neighbor search so missing spots get nearest color
+function fillNaNsNearest(arr, cols, rows) {
+    const idx = (x, y) => x + y * cols;
+    const out = arr;
+    const maxR = Math.max(cols, rows);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = idx(x, y);
+            if (Number.isFinite(out[i])) continue;
+            let found = false;
+            let foundVal = Number.NaN;
+            for (let r = 1; r < maxR && !found; r++) {
+                const xmin = Math.max(0, x - r);
+                const xmax = Math.min(cols - 1, x + r);
+                const ymin = Math.max(0, y - r);
+                const ymax = Math.min(rows - 1, y + r);
+                for (let yy = ymin; yy <= ymax && !found; yy++) {
+                    for (let xx = xmin; xx <= xmax; xx++) {
+                        if (Math.abs(xx - x) !== r && Math.abs(yy - y) !== r) continue;
+                        const v = out[idx(xx, yy)];
+                        if (Number.isFinite(v)) { found = true; foundVal = v; break; }
+                    }
+                }
+            }
+            if (found) out[i] = foundVal;
+        }
+    }
+    return out;
+}
+
 // ==========================================
 // 3. DATA LOADING
 // ==========================================
@@ -547,8 +577,27 @@ const createWorldMap = async () => {
         selectedDatasets: new Set()
     };
 
-    function updateMapForYear(year) {
+    function updateMapForMonth(input, monthOpt) {
+
+        let year = null;
+        let month = null; // 1-12 or null
+        if (input instanceof Date) {
+            year = input.getFullYear();
+            month = input.getMonth() + 1;
+        } else if (typeof input === 'object' && input != null && input.year != null) {
+            year = +input.year;
+            month = input.month == null ? null : +input.month;
+        } else if (typeof input === 'number') {
+            year = +input;
+            month = monthOpt == null ? null : +monthOpt;
+        } else if (typeof input === 'string') {
+            const d = new Date(input);
+            if (!Number.isNaN(d)) { year = d.getFullYear(); month = d.getMonth() + 1; }
+        }
+
         appState.currentYear = year;
+        appState.currentMonth = month;
+
         const key = appState.currentDatasetKey;
         const meta = appState.loadedData.get(key);
         if (!meta) return;
@@ -561,7 +610,7 @@ const createWorldMap = async () => {
         let values;
         
         if (key !== 'sst') {
-
+            // For non-SST datasets we use the year part of the selection. (TODO adapt when month data available)
             const yrMap = meta.byYearMean.get(year) || new Map();
             values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
             if (values.length === 0) {
@@ -572,8 +621,7 @@ const createWorldMap = async () => {
         }
 
         fishingLayer.style('display', 'none');
-
-        if (key !== 'sst') sstLayer.style('display', 'none');
+        sstLayer.style('display', 'none');
 
         // --- GDP VISUALIZATION ---
         if (key === 'gdp') {
@@ -656,12 +704,27 @@ const createWorldMap = async () => {
 
             let monthData = null;
             if (year != null) {
-                const monthStr = `${String(year)}-01`;
-                monthData = sstData.find(d => d.month === monthStr);
+                // If a month is provided, prefer the exact YYYY-MM match.
+                if (month != null) {
+                    const mm = String(month).padStart(2, '0');
+                    const monthStr = `${String(year)}-${mm}`;
+                    monthData = sstData.find(d => d.month === monthStr);
+                }
+                // fallback to January of the year (preserves previous behavior)
+                if (!monthData) {
+                    const monthStr = `${String(year)}-01`;
+                    monthData = sstData.find(d => d.month === monthStr);
+                }
             }
 
-            if (!monthData) monthData = sstData.find(d => d.month && d.month.endsWith('-01')) || sstData[0];
-            if (!monthData) return;
+            if (!monthData){
+                legend.select('.legend-title').text('Data available between 1982/01 and 2023/01');
+                legend.select('.legend-bar').style('background', '');
+                legend.select('.legend-max').text('');
+                legend.select('.legend-min').text('');
+                return;
+            }
+                
 
             const grid = new Array(lonCount * latCount);
             for (let i = 0; i < latCount; i++) {
@@ -719,36 +782,6 @@ const createWorldMap = async () => {
                 }
             }
 
-            // Fill remaining NaNs by nearest-neighbor search so missing spots get nearest color
-            function fillNaNsNearest(arr, cols, rows) {
-                const idx = (x, y) => x + y * cols;
-                const out = arr;
-                const maxR = Math.max(cols, rows);
-                for (let y = 0; y < rows; y++) {
-                    for (let x = 0; x < cols; x++) {
-                        const i = idx(x, y);
-                        if (Number.isFinite(out[i])) continue;
-                        let found = false;
-                        let foundVal = Number.NaN;
-                        for (let r = 1; r < maxR && !found; r++) {
-                            const xmin = Math.max(0, x - r);
-                            const xmax = Math.min(cols - 1, x + r);
-                            const ymin = Math.max(0, y - r);
-                            const ymax = Math.min(rows - 1, y + r);
-                            for (let yy = ymin; yy <= ymax && !found; yy++) {
-                                for (let xx = xmin; xx <= xmax; xx++) {
-                                    if (Math.abs(xx - x) !== r && Math.abs(yy - y) !== r) continue;
-                                    const v = out[idx(xx, yy)];
-                                    if (Number.isFinite(v)) { found = true; foundVal = v; break; }
-                                }
-                            }
-                        }
-                        if (found) out[i] = foundVal;
-                    }
-                }
-                return out;
-            }
-
             fillNaNsNearest(upGrid, uCols, uRows);
 
             const numLevels = 18;
@@ -791,7 +824,7 @@ const createWorldMap = async () => {
 
             sstLayer.style('display', null);
             // Place the SST layer behind country shapes so land visually hides contours
-            try { if (typeof sstLayer.lower === 'function') sstLayer.lower(); } catch (e) { /* ignore */ }
+            if (typeof sstLayer.lower === 'function') sstLayer.lower();
 
             // Update legend for SST
             legend.select('.legend-title').text(`Sea Surface Temperature — ${monthData.month}`);
@@ -846,18 +879,50 @@ const createWorldMap = async () => {
 
             sstLayer.style('display', 'none');
 
-            let targetYear = appState.currentYear;
-            if (!meta.years.includes(targetYear)) {
-                targetYear = meta.years.at(-1) ?? null;
+            const selYear = appState.currentYear == null ? null : +appState.currentYear;
+            let targetYear = null;
+            if (selYear != null && Array.isArray(meta.years) && meta.years.length > 0) {
+                    targetYear = selYear;
+            } else {
+                // fallback to most recent available year
+                targetYear = (meta.years && meta.years.length) ? meta.years.at(-1) : null;
             }
-            if (targetYear != null) updateMapForYear(targetYear);
+
+            if (targetYear != null) updateMapForMonth({ year: targetYear, month: appState.currentMonth });
         } else {
+            const sstData = appState.loadedSSTData;
+            if (!sstData) return;
 
-            const meta = appState.loadedSSTData;
-            if (!meta) return;
+            const selYear = appState.currentYear == null ? null : +appState.currentYear;
+            const selMonth = appState.currentMonth == null ? null : +appState.currentMonth;
 
-            let targetYear = appState.currentYear;
-            updateMapForYear(targetYear);
+            let monthStr = null;
+            if (selYear != null) {
+                if (selMonth != null) {
+                    const mm = String(selMonth).padStart(2, '0');
+                    monthStr = `${selYear}-${mm}`;
+                    if (!sstData.find(d => d.month === monthStr)) monthStr = null;
+                }
+                // fallback to January of that year if exact month not found
+                if (!monthStr) {
+                    const jan = `${selYear}-01`;
+                    if (sstData.find(d => d.month === jan)) monthStr = jan;
+                }
+            }
+
+            if (!monthStr && selYear != null) {
+                // collect months in that year
+                const candidates = sstData.filter(d => d.month && d.month.startsWith(`${selYear}-`)).map(d => d.month);
+                if (candidates.length > 0) monthStr = candidates[0];
+            }
+
+            if (!monthStr) {
+                monthStr = `${selYear}-01`;
+            }
+
+            if (monthStr) {
+                updateMapForMonth(monthStr);
+            }
         }
     }
 
@@ -920,7 +985,7 @@ const createWorldMap = async () => {
         }
     })();
 
-    window.updateMapYear = (year) => {
-        if (appState.currentDatasetKey) updateMapForYear(year);
+    globalThis.updateMapMonth = (arg, month) => {
+        if (appState.currentDatasetKey) updateMapForMonth(arg, month);
     };
 };

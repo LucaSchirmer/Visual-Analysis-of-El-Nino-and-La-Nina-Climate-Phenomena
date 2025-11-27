@@ -101,8 +101,7 @@ const createTimelineScale = async () => {
         });
 
     // ===== DRAGGABLE CURSOR =====
-    // Create cursor data object
-    const cursorData = { x: x(data[0].date) };
+    const cursorData = { x: x(new Date(2024, 0, 1)), date: new Date(2024, 0, 1) };
     
     // Cursor handle (draggable circle)
     const cursorHandle = window.append("circle")
@@ -287,7 +286,7 @@ const createTimelineScale = async () => {
         .on("end", dragended);
     
     cursorHandle.call(drag);
-    
+
     return x;
 };
 
@@ -296,29 +295,39 @@ function onClickEvent(event, d) {
     d3.selectAll('.strong-event circle').classed('timeline-selected', false);
     d3.select(this).classed('timeline-selected', true);
 
-    const year = d.date.getFullYear();
-    // call map updater if available
-    if (typeof globalThis.updateMapYear === 'function') {
+    const date = d.date;
+    if (typeof globalThis.updateMapMonth === 'function') {
         try {
-            globalThis.updateMapYear(year);
+            globalThis.updateMapMonth(date);
+        } catch (err) {
+            console.warn('updateMapMonth failed', err);
+        }
+    } else if (typeof globalThis.updateMapYear === 'function') {
+        try {
+            globalThis.updateMapYear(date.getFullYear());
         } catch (err) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Clicked strong event:', d.date, d.phase, d.intensity, '-> year', year);
+        console.log('Clicked strong event:', d.date, d.phase, d.intensity);
     }
 }
 
 function onSlidedCursor(dataPoint) {
-    const year = dataPoint.date.getFullYear();
-    // call map updater if available
-    if (typeof globalThis.updateMapYear === 'function') {
+    const date = dataPoint.date;
+    if (typeof globalThis.updateMapMonth === 'function') {
         try {
-            globalThis.updateMapYear(year);
+            globalThis.updateMapMonth(date);
+        } catch (err) {
+            console.warn('updateMapMonth failed', err);
+        }
+    } else if (typeof globalThis.updateMapYear === 'function') {
+        try {
+            globalThis.updateMapYear(date.getFullYear());
         } catch (err) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity, '-> year', year);
+        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity);
     }
 }
