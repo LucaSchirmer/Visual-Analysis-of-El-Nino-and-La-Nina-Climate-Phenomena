@@ -1,6 +1,8 @@
 /venv
 *.nc
+/.idea
 python_scripts/.cdsapirc
 python_scripts/data/oni.data
 /python_scripts/data/fishing_data
-/.idea
+python_scripts/data/monthly_temp_data.grib
+python_scripts/data/monthly_temp_data.grib.5b7b6.idx

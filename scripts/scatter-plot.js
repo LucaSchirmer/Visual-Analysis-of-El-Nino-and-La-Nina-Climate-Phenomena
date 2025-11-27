@@ -1,5 +1,5 @@
-
 const CHART_CONFIG = {
+
   dimensions: {
     totalWidth: 900,
     totalHeight: 600,
@@ -17,33 +17,46 @@ const CHART_CONFIG = {
     container: "#scatterplot-chart"
   },
   colors: {
-    elNino: "#e74c3c",      // Rouge pour El Niño
-    laNina: "#3498db",      // Bleu pour La Niña
-    neutral: "#95a5a6",     // Gris pour période neutre
-    highlight: "#f39c12"    // Orange pour highlight
+    elNino: "#e74c3c",      // Red for El Niño
+    laNina: "#3498db",      // Blue for La Niña
+    neutral: "#95a5a6",     // Gray for neutral period
+    highlight: "#f39c12"    // Orange for highlight
   }
 };
 
-// Stocker les données originales globalement
+// Store original data globally
 let ORIGINAL_DATA = null;
-let YEAR_DOMAIN = null;   // { min: année_min, max: année_max }
-let CURRENT_YEAR = null;  // Année actuellement sélectionnée dans le slider
+let YEAR_DOMAIN = null;   // { min: min_year, max: max_year }
 
-// Variables disponibles pour les axes (tu pourras en ajouter)
+// Available variables for axes (you can add more)
 const VARIABLES = {
   temperature: {
     id: "temperature",
-    label: "Température moyenne (°C)",
+    label: "Average Temperature (°C)",
     accessor: d => d.temperature,
     unit: "°C",
     format: v => v.toFixed(1)
   },
   rainfall: {
     id: "rainfall",
-    label: "Précipitations moyennes (mm)",
+    label: "Average Precipitation (mm)",
     accessor: d => d.rainfall,
     unit: " mm",
     format: v => v.toFixed(0)
+  },
+  fishing: {
+    id: "fishing",
+    label: "Fishing Catches (tonnes)",
+    accessor: d => d.fishing,
+    unit: " t",
+    format: v => v == null ? "NA" : v.toFixed(0)
+  },
+  oni: {
+    id: "oni",
+    label: "ONI Index (annual average)",
+    accessor: d => d.oni,
+    unit: "",
+    format: v => v == null ? "NA" : v.toFixed(2)
   }
 };
 
@@ -51,50 +64,54 @@ let CURRENT_X_VAR = "temperature";
 let CURRENT_Y_VAR = "rainfall";
 
 // ==========================================
-// FONCTION PRINCIPALE: CRÉATION DU SCATTER PLOT
+// MAIN FUNCTION: CREATE SCATTER PLOT
 // ==========================================
 const createScatterPlot = async (config = CHART_CONFIG) => {
   try {
-    // 1. CHARGER LES DONNÉES
-    const [rainfallData, temperatureData] = await Promise.all([
+    // 1. LOAD DATA
+    const [rainfallData, temperatureData, fishingData, oniData] = await Promise.all([
       d3.csv("python_scripts/data/rainfall_by_country.csv"),
-      d3.csv("python_scripts/data/temperature_by_country.csv")
+      d3.csv("python_scripts/data/temperature_by_country.csv"),
+      d3.csv("python_scripts/data/fishing_by_country_year.csv"),
+      d3.csv("python_scripts/data/oni_monthly.csv")
     ]);
 
-    // 2. TRAITER ET AGRÉGER LES DONNÉES
-    ORIGINAL_DATA = processClimateData(rainfallData, temperatureData);
+    // 2. PROCESS AND AGGREGATE DATA
+    ORIGINAL_DATA = processClimateData(rainfallData, temperatureData, fishingData, oniData);
 
-    // 2b. CALCULER LE DOMAINE DES ANNÉES
+    // 2b. CALCULATE YEAR DOMAIN
     const years = ORIGINAL_DATA.map(d => d.year);
     YEAR_DOMAIN = {
     min: d3.min(years),
     max: d3.max(years)
     };
-    CURRENT_YEAR = YEAR_DOMAIN.max; // par défaut, la dernière année disponible
+    CURRENT_YEAR = YEAR_DOMAIN.max; // by default, the last available year
 
-    // 3. CRÉER LA STRUCTURE (contrôles + conteneur SVG)
+    // 3. CREATE STRUCTURE (controls + SVG container)
     setupVisualization(config);
 
-    // 3b. CRÉER LE SLIDER D'ANNÉES
-    setupYearSlider(config);
+    // Populate country list once from complete data
+    updateCountryOptions(ORIGINAL_DATA);
 
-    // 4. DESSINER LE GRAPHIQUE INITIAL (toutes les années au départ)
-    updateScatterPlot(ORIGINAL_DATA, config);
-
-    
+    // Attach listeners once
+    attachEventListeners(config);
+    globalThis.updateMapYear = (year) => {
+      CURRENT_YEAR = year;
+      applyFilters(config);
+    };
+    d3.select("#country-filter").property("value", "all");
+    CURRENT_YEAR = YEAR_DOMAIN.max;
+    applyFilters(config);
   } catch (error) {
-    console.error("Erreur lors du chargement des données:", error);
     showError(config.selectors.container, error.message);
   }
 };
 
 // ==========================================
-// TRAITEMENT DES DONNÉES
+// DATA PROCESSING
 // ==========================================
-const processClimateData = (rainfallData, temperatureData) => {
-  console.log("Traitement des données...");
-  
-  // Agréger les précipitations par pays et année
+const processClimateData = (rainfallData, temperatureData, fishingData, oniData) => {  
+  // Aggregate precipitation by country and year
   const rainfallByCountry = d3.rollup(
     rainfallData,
     v => d3.mean(v, d => +d.rainfall_mm),
@@ -102,7 +119,7 @@ const processClimateData = (rainfallData, temperatureData) => {
     d => new Date(d.time).getFullYear()
   );
   
-  // Agréger les températures par pays et année
+  // Aggregate temperatures by country and year
   const tempByCountry = d3.rollup(
     temperatureData,
     v => d3.mean(v, d => +d.temperature_celsius),
@@ -110,42 +127,133 @@ const processClimateData = (rainfallData, temperatureData) => {
     d => new Date(d.time).getFullYear()
   );
   
-  // Combiner les deux datasets
+  //  Fishing by country + year (tonnes) 
+  const fishingByCountryYear = d3.rollup(
+    fishingData,
+    v => d3.sum(v, d => +d.total_tonnes),
+    d => d.country_name,
+    d => +d.year
+  );
+
+  //  Annual ONI (global, not by country) 
+  const intensityRank = {
+    "Neutral": 0,
+    "Weak": 1,
+    "Moderate": 2,
+    "Strong": 3,
+    "Very Strong": 4
+  };
+
+  const oniByYear = d3.rollup(
+    oniData,
+    v => {
+      // Annual continuous average (for potential X/Y axis)
+      const meanOni = d3.mean(v, d => +d.oni);
+
+      // Count monthly phases in the year
+      const phaseCounts = d3.rollup(
+        v,
+        vv => vv.length,
+        d => d.phase  // values from CSV: "El Niño", "La Niña", "Neutral"
+      );
+
+      const elCount   = (phaseCounts.get("El Niño") || 0) + (phaseCounts.get("El Nino") || 0);
+      const laCount   = (phaseCounts.get("La Niña") || 0) + (phaseCounts.get("La Nina") || 0);
+      const neutralCt = phaseCounts.get("Neutral") || 0;
+
+      let phase = "Neutral";
+
+      if (elCount > laCount && elCount > 0) {
+        phase = "El Niño";
+      } else if (laCount > elCount && laCount > 0) {
+        phase = "La Niña";
+      } else if ((elCount === laCount) && (elCount > 0)) {
+        // Tie: break with mean sign
+        phase = meanOni >= 0 ? "El Niño" : "La Niña";
+      } else if (neutralCt > 0) {
+        phase = "Neutral";
+      }
+
+      // Annual intensity = strongest monthly intensity
+      let bestIntensity = "Neutral";
+      let bestRank = 0;
+      v.forEach(row => {
+        const lab = row.intensity || "Neutral";
+        const r = intensityRank[lab] ?? 0;
+        if (r > bestRank) {
+          bestRank = r;
+          bestIntensity = lab;
+        }
+      });
+
+      return {
+        meanOni,
+        phase,
+        intensity: bestIntensity
+      };
+    },
+    d => +d.year
+  );
+
+  //  Combine everything 
   const combined = [];
-  
+
   rainfallByCountry.forEach((yearData, country) => {
     yearData.forEach((rainfall, year) => {
       const tempData = tempByCountry.get(country);
-      if (tempData && tempData.has(year)) {
-        const temperature = tempData.get(year);
-        
-        // Filtrer les valeurs aberrantes
-        if (temperature > 0 && temperature < 50 && rainfall > 0 && rainfall < 500) {
-          const phase = determineClimatePhase(year);
-          
-          combined.push({
-            country,
-            year,
-            rainfall,
-            temperature,
-            phase
-          });
-        }
+      if (!tempData || !tempData.has(year)) return;
+      const temperature = tempData.get(year);
+
+      // Filter out some aberrant values
+      if (!(temperature > 0 && temperature < 50 && rainfall > 0 && rainfall < 500)) {
+        return;
       }
+
+      // Fishing for this country/year (can be undefined)
+      let fishing = null;
+      const fishingYears = fishingByCountryYear.get(country);
+      if (fishingYears && fishingYears.has(year)) {
+        fishing = fishingYears.get(year);
+      }
+
+      // Global ONI for this year
+      const oniInfo = oniByYear.get(year);
+      let phase = determineClimatePhase(year); // fallback if no ONI
+      let oni = null;
+      let oniPhase = null;
+      let oniIntensity = null;
+
+      if (oniInfo) {
+        oni = oniInfo.meanOni;
+        oniPhase = oniInfo.phase;
+        oniIntensity = oniInfo.intensity;
+        phase = oniInfo.phase; // align the "phase" used for ENSO color
+      }
+
+      combined.push({
+        country,
+        year,
+        rainfall,
+        temperature,
+        fishing,
+        oni,
+        oniPhase,
+        oniIntensity,
+        phase   // used later for color (El Niño / La Niña / Neutral)
+      });
     });
   });
-  
-  console.log(`${combined.length} points de données créés`);
+
   return combined;
 };
 
-// Déterminer la phase climatique basée sur l'année
+// Determine climate phase based on year
 const determineClimatePhase = (year) => {
-  // Années El Niño connues
+  // Known El Niño years
   const elNinoYears = [1982, 1983, 1987, 1991, 1992, 1997, 1998, 2002, 2003, 
                        2009, 2010, 2015, 2016, 2018, 2019, 2023];
   
-  // Années La Niña connues
+  // Known La Niña years
   const laNinaYears = [1988, 1989, 1998, 1999, 2000, 2007, 2008, 2010, 2011, 
                        2020, 2021, 2022];
   
@@ -155,15 +263,15 @@ const determineClimatePhase = (year) => {
 };
 
 // ==========================================
-// SETUP DE LA VISUALISATION (UNE SEULE FOIS)
+// VISUALIZATION SETUP (ONCE ONLY)
 // ==========================================
 const setupVisualization = (config) => {
   const container = d3.select(config.selectors.container);
   
-  // Nettoyer complètement
+  // Clean completely
   container.selectAll("*").remove();
   
-  // 1. CRÉER LES CONTRÔLES (EN PREMIER)
+  // 1. CREATE CONTROLS (FIRST)
   const controlsDiv = container.append("div")
     .attr("id", "scatter-controls")
     .style("margin-bottom", "20px")
@@ -175,26 +283,28 @@ const setupVisualization = (config) => {
     .style("align-items", "center")
     .style("flex-wrap", "wrap");
   
-  // Filtre par pays
+  // Country filter
   controlsDiv.append("label")
     .style("font-weight", "600")
-    .text("Filtrer par pays:");
+    .text("Filter by country:");
   
   const countrySelect = controlsDiv.append("select")
     .attr("id", "country-filter")
+    .attr("multiple", true)
+    .attr("size", 8)
     .style("padding", "5px 10px")
     .style("border", "1px solid #ccc")
     .style("border-radius", "3px");
   
   countrySelect.append("option")
     .attr("value", "all")
-    .text("Tous les pays");
+    .text("All countries");
   
-  // Filtre par phase
+  // Phase filter
   controlsDiv.append("label")
     .style("font-weight", "600")
     .style("margin-left", "20px")
-    .text("Filtrer par phase:");
+    .text("Filter by phase:");
   
   const phaseSelect = controlsDiv.append("select")
     .attr("id", "phase-filter")
@@ -202,13 +312,13 @@ const setupVisualization = (config) => {
     .style("border", "1px solid #ccc")
     .style("border-radius", "3px");
   
-  ["Toutes", "El Niño", "La Niña", "Neutral"].forEach(phase => {
+  ["All", "El Niño", "La Niña", "Neutral"].forEach(phase => {
     phaseSelect.append("option")
       .attr("value", phase)
       .text(phase);
   });
   
-  // Bouton reset
+  // Reset button
   controlsDiv.append("button")
     .attr("id", "reset-button")
     .style("padding", "5px 15px")
@@ -218,17 +328,21 @@ const setupVisualization = (config) => {
     .style("border-radius", "3px")
     .style("cursor", "pointer")
     .style("margin-left", "20px")
-    .text("Réinitialiser");
+    .text("Reset");
   
-    // 2. CRÉER LE CONTENEUR SVG (APRÈS LES CONTRÔLES)
+    // 2. CREATE SVG CONTAINER (AFTER CONTROLS)
     container.append("div")
     .attr("id", "scatter-svg-container");
 
-    // 2b. CONTENEUR POUR LE SLIDER D'ANNÉES (SOUS LE PLOT)
+    // 2c. CONTAINER FOR COUNTRY COMPARISONS (SMALL MULTIPLES)
     container.append("div")
-    .attr("id", "year-slider-container");
+      .attr("id", "country-comparison-container")
+      .style("margin-top", "20px")
+      .style("display", "flex")
+      .style("gap", "15px")
+      .style("flex-wrap", "wrap");
   
-  // 3. CRÉER LE TOOLTIP (APRÈS TOUT)
+  // 3. CREATE TOOLTIP (AFTER EVERYTHING)
   container.append("div")
     .attr("id", "scatter-tooltip")
     .style("position", "absolute")
@@ -241,7 +355,7 @@ const setupVisualization = (config) => {
     .style("pointer-events", "none")
     .style("z-index", "1000");
 
-  // === NOUVEAUX CONTRÔLES POUR LES AXES ===
+  // === NEW CONTROLS FOR AXES ===
   const axisControls = controlsDiv.append("div")
     .style("display", "flex")
     .style("align-items", "center")
@@ -250,7 +364,7 @@ const setupVisualization = (config) => {
   // Label X
   axisControls.append("label")
     .style("font-weight", "600")
-    .text("Axe X :");
+    .text("X Axis:");
 
   // Select X
   const xSelect = axisControls.append("select")
@@ -262,7 +376,7 @@ const setupVisualization = (config) => {
   // Label Y
   axisControls.append("label")
     .style("font-weight", "600")
-    .text("Axe Y :");
+    .text("Y Axis:");
 
   // Select Y
   const ySelect = axisControls.append("select")
@@ -271,7 +385,7 @@ const setupVisualization = (config) => {
     .style("border", "1px solid #ccc")
     .style("border-radius", "3px");
 
-  // Remplir les options à partir de VARIABLES
+  // Fill options from VARIABLES
   Object.values(VARIABLES).forEach(v => {
     xSelect.append("option")
       .attr("value", v.id)
@@ -282,63 +396,13 @@ const setupVisualization = (config) => {
       .text(v.label);
   });
 
-  // valeurs par défaut
+  // Default values
   xSelect.property("value", CURRENT_X_VAR);
   ySelect.property("value", CURRENT_Y_VAR);
 };
 
 // ==========================================
-// SLIDER D'ANNÉES SOUS LE GRAPHIQUE
-// ==========================================
-const setupYearSlider = (config) => {
-  if (!YEAR_DOMAIN) return;
-
-  const sliderContainer = d3.select("#year-slider-container");
-
-  // Nettoyer si jamais on reconstruit
-  sliderContainer.selectAll("*").remove();
-
-  sliderContainer
-    .style("margin-top", "15px")
-    .style("padding", "10px 15px")
-    .style("background-color", "#f8f9fa")
-    .style("border-radius", "5px")
-    .style("display", "flex")
-    .style("align-items", "center")
-    .style("gap", "10px");
-
-  // Label "Année :"
-  sliderContainer.append("span")
-    .style("font-weight", "600")
-    .text("Année :");
-
-  // Valeur d'année actuelle
-  sliderContainer.append("span")
-    .attr("id", "year-slider-value")
-    .style("min-width", "50px")
-    .style("font-variant-numeric", "tabular-nums")
-    .text(CURRENT_YEAR);
-
-  // Slider lui-même
-  sliderContainer.append("input")
-    .attr("type", "range")
-    .attr("id", "year-slider")
-    .attr("min", YEAR_DOMAIN.min)
-    .attr("max", YEAR_DOMAIN.max)
-    .attr("step", 1)
-    .style("flex", "1")
-    .property("value", CURRENT_YEAR);
-
-  // Listener : mise à jour en temps réel du scatter quand on déplace le curseur
-  d3.select("#year-slider").on("input", function() {
-    CURRENT_YEAR = +this.value;
-    d3.select("#year-slider-value").text(CURRENT_YEAR);
-    applyFilters(config);   // re-filtre les données et redessine le plot
-  });
-};
-
-// ==========================================
-// MISE À JOUR DU GRAPHIQUE (PEUT ÊTRE APPELÉE PLUSIEURS FOIS)
+// UPDATE CHART (CAN BE CALLED MULTIPLE TIMES)
 // ==========================================
 const updateScatterPlot = (data, config) => {
   const { totalWidth, totalHeight, margin } = config.dimensions;
@@ -348,15 +412,15 @@ const updateScatterPlot = (data, config) => {
   const xVar = VARIABLES[CURRENT_X_VAR];
   const yVar = VARIABLES[CURRENT_Y_VAR];
 
-  // Dimensions internes
+  // Inner dimensions
   const innerWidth = totalWidth - margin.left - margin.right;
   const innerHeight = totalHeight - margin.top - margin.bottom;
   
-  // Sélectionner le conteneur SVG (pas le conteneur principal)
+  // Select SVG container (not main container)
   const svgContainer = d3.select("#scatter-svg-container");
   svgContainer.selectAll("*").remove();
   
-  // Créer le SVG
+  // Create SVG
   const svg = svgContainer
     .append("svg")
     .attr("width", totalWidth)
@@ -365,13 +429,21 @@ const updateScatterPlot = (data, config) => {
   const g = svg.append("g")
     .attr("transform", `translate(${margin.left},${margin.top})`);
   
-  // Échelles avec domaines fixes pour éviter les points hors limites
-  const xExtent = d3.extent(data, xVar.accessor);
-  const yExtent = d3.extent(data, yVar.accessor);
+  const cleanX = data.filter(d => {
+    const v = xVar.accessor(d);
+    return v != null && !Number.isNaN(v);
+  });
+  const cleanY = data.filter(d => {
+    const v = yVar.accessor(d);
+    return v != null && !Number.isNaN(v);
+  });
 
-  // sécurité si data vide
-  if (!xExtent[0] && !xExtent[1]) return;
-  if (!yExtent[0] && !yExtent[1]) return;
+  if (!cleanX.length || !cleanY.length) {
+    return;
+  }
+
+  const xExtent = d3.extent(cleanX, xVar.accessor);
+  const yExtent = d3.extent(cleanY, yVar.accessor);
 
   const xScale = d3.scaleLinear()
     .domain([xExtent[0] * 0.95, xExtent[1] * 1.05])
@@ -383,12 +455,12 @@ const updateScatterPlot = (data, config) => {
     .range([innerHeight, 0])
     .nice();
   
-  // Échelle de couleur par phase
+  // Color scale by phase
   const colorScale = d3.scaleOrdinal()
     .domain(["El Niño", "La Niña", "Neutral"])
     .range([colors.elNino, colors.laNina, colors.neutral]);
   
-  // Grille
+  // Grid
   g.append("g")
     .attr("class", "grid")
     .attr("transform", `translate(0,${innerHeight})`)
@@ -416,7 +488,7 @@ const updateScatterPlot = (data, config) => {
     .call(d3.axisLeft(yScale))
     .style("font-size", "12px");
   
-  // Labels des axes
+  // Axis labels
   svg.append("text")
     .attr("x", totalWidth / 2)
     .attr("y", totalHeight - 10)
@@ -434,14 +506,14 @@ const updateScatterPlot = (data, config) => {
     .style("font-weight", "600")
     .text(yVar.label);
   
-  // Titre
+  // Title
   svg.append("text")
     .attr("x", totalWidth / 2)
     .attr("y", 20)
     .style("text-anchor", "middle")
     .style("font-size", "18px")
     .style("font-weight", "bold")
-    .text("Corrélation Température-Précipitations par Phase Climatique");
+    .text(`Correlation ${xVar.label} – ${yVar.label} by climate phase`);
   
   // Tooltip
   const tooltip = d3.select("#scatter-tooltip");
@@ -459,7 +531,7 @@ const updateScatterPlot = (data, config) => {
     .style("stroke-width", circleStrokeWidth)
     .style("cursor", "pointer");
   
-  // Animation d'entrée
+  // Entry animation
   circles.transition()
     .duration(800)
     .delay((d, i) => i * 2)
@@ -474,14 +546,23 @@ const updateScatterPlot = (data, config) => {
         .attr("r", circleRadius * 1.5)
         .style("opacity", 1);
       
+      let extra = "";
+      if (d.fishing != null) {
+        extra += `Fishing: ${d.fishing.toFixed(0)} t<br/>`;
+      }
+      if (d.oni != null) {
+        extra += `ONI (avg.): ${d.oni.toFixed(2)} (${d.oniPhase || d.phase}, ${d.oniIntensity || "Neutral"})<br/>`;
+      }
+
       tooltip
         .style("visibility", "visible")
         .html(`
           <strong>${d.country}</strong><br/>
-          Année: ${d.year}<br/>
-          Phase: <span style="color: ${colorScale(d.phase)}">${d.phase}</span><br/>
+          Year: ${d.year}<br/>
+          ENSO Phase: <span style="color: ${colorScale(d.phase)}">${d.phase}</span><br/>
           ${xVar.label}: ${xVar.format(xVar.accessor(d))}${xVar.unit}<br/>
-          ${yVar.label}: ${yVar.format(yVar.accessor(d))}${yVar.unit}
+          ${yVar.label}: ${yVar.format(yVar.accessor(d))}${yVar.unit}<br/>
+          ${extra}
         `);
     })
     .on("mousemove", function(event) {
@@ -499,7 +580,7 @@ const updateScatterPlot = (data, config) => {
       tooltip.style("visibility", "hidden");
     });
   
-  // Légende
+  // Legend
   const legend = svg.append("g")
     .attr("transform", `translate(${totalWidth - 130}, ${margin.top + 20})`);
   
@@ -523,27 +604,249 @@ const updateScatterPlot = (data, config) => {
       .text(phase);
   });
   
-  // Statistiques
+  // Statistics
   addStatistics(svg, data, colorScale, totalWidth, totalHeight);
-  
-  // Mettre à jour les options de pays dans le select
-  updateCountryOptions(data);
-  
-  // Ajouter les event listeners
-  attachEventListeners(config);
+
+};
+
+function getSelectedCountries() {
+  const select = d3.select("#country-filter");
+  if (select.empty()) return [];
+
+  return select
+    .selectAll("option:checked")
+    .nodes()
+    .map(o => o.value);
+}
+
+// ==========================================
+// COUNTRY COMPARISON: SMALL MULTIPLES (AVEC DRAG & DROP + OVERLAY)
+// ==========================================
+const updateCountryComparison = (data, config) => {
+  const container = d3.select("#country-comparison-container");
+  if (container.empty()) return;
+
+  container.selectAll("*").remove();
+
+  //  Setup Drag & Drop sur le conteneur (inchangé) 
+  const containerNode = container.node();
+  containerNode.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    const afterElement = getDragAfterElement(containerNode, e.clientX, e.clientY);
+    const draggable = document.querySelector(".dragging");
+    if (draggable) {
+        if (afterElement == null) {
+            containerNode.appendChild(draggable);
+        } else {
+            containerNode.insertBefore(draggable, afterElement);
+        }
+    }
+  });
+
+  //  Préparation des données (inchangé) 
+  const selectedCountries = getSelectedCountries();
+  let displayList = selectedCountries.includes("all") ? ["All Countries"] : selectedCountries;
+
+  const xVar = VARIABLES[CURRENT_X_VAR];
+  const yVar = VARIABLES[CURRENT_Y_VAR];
+  const cleanData = data.filter(d => {
+    const xv = xVar.accessor(d);
+    const yv = yVar.accessor(d);
+    return xv != null && !Number.isNaN(xv) && yv != null && !Number.isNaN(yv);
+  });
+  if (!cleanData.length) return;
+  const xExtent = d3.extent(cleanData, xVar.accessor);
+  const yExtent = d3.extent(cleanData, yVar.accessor);
+
+  // Mini chart dimensions & scales (inchangé)
+  const miniWidth = 260;
+  const miniHeight = 220;
+  const margin = { top: 30, right: 15, bottom: 35, left: 45 };
+  const innerWidth = miniWidth - margin.left - margin.right;
+  const innerHeight = miniHeight - margin.top - margin.bottom;
+  const xScale = d3.scaleLinear().domain([xExtent[0] * 0.95, xExtent[1] * 1.05]).range([0, innerWidth]).nice();
+  const yScale = d3.scaleLinear().domain([yExtent[0] * 0.95, yExtent[1] * 1.05]).range([innerHeight, 0]).nice();
+  const colorScale = d3.scaleOrdinal().domain(["El Niño", "La Niña", "Neutral"]).range([config.colors.elNino, config.colors.laNina, config.colors.neutral]);
+
+  //  Génération des cartes 
+  displayList.forEach(item => {
+    let chartData;
+    let title;
+    if (item === "All Countries") {
+      chartData = cleanData;
+      title = "Global Overview (All Countries)";
+    } else {
+      chartData = cleanData.filter(d => d.country === item);
+      title = item;
+    }
+    if (!chartData.length) return;
+
+    const card = container.append("div")
+      .attr("class", "draggable-card")
+      .attr("draggable", "true")
+      // ... styles de base inchangés ...
+      .style("border", "1px solid #ddd").style("border-radius", "6px").style("padding", "8px").style("background-color", "#fff").style("box-shadow", "0 1px 3px rgba(0,0,0,0.08)");
+
+    //  Events Drag & Drop (inchangé) 
+    const cardNode = card.node();
+    cardNode.addEventListener("dragstart", () => cardNode.classList.add("dragging"));
+    cardNode.addEventListener("dragend", () => cardNode.classList.remove("dragging"));
+
+    // >>> NOUVEAU : BOUTON AGRANDIR <<<
+    const expandBtn = card.append("button")
+        .attr("class", "expand-card-btn")
+        .attr("title", "Expand chart")
+        // SVG icône d'agrandissement
+        .html('<svg viewBox="0 0 24 24"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42 2.87-2.89L21 9V3zM3 9l2.3-2.3 2.87 2.89 1.42-1.42-2.89-2.87L9 3H3zM9 21l-2.3-2.3 2.89-2.87-1.42-1.42-2.87 2.89L3 15v6zM21 15l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6z"/></svg>');
+
+    // Gestion du clic sur le bouton agrandir
+    expandBtn.on("click", (e) => {
+        // Empêche le drag de démarrer si on clique sur le bouton
+        e.stopPropagation(); 
+        e.preventDefault();
+        // Appelle la fonction d'ouverture de l'overlay
+        openChartOverlay(chartData, title, config, xVar, yVar, colorScale, xExtent, yExtent);
+    });
+
+    //  Rendu du mini SVG (inchangé) 
+    card.append("div").style("text-align", "center").style("font-size", "13px").style("font-weight", "600").style("margin-bottom", "4px").style("pointer-events", "none").text(title);
+    const svg = card.append("svg").attr("width", miniWidth).attr("height", miniHeight).style("pointer-events", "none");
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
+    g.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(xScale).ticks(4)).style("font-size", "9px");
+    g.append("g").call(d3.axisLeft(yScale).ticks(4)).style("font-size", "9px");
+    g.selectAll("circle").data(chartData).join("circle")
+      .attr("cx", d => xScale(xVar.accessor(d))).attr("cy", d => yScale(yVar.accessor(d)))
+      .attr("r", 2.5).style("fill", d => colorScale(d.phase))
+      .style("opacity", item === "All Countries" ? 0.3 : 0.7).style("stroke", "none");
+    svg.append("text").attr("x", miniWidth / 2).attr("y", miniHeight - 5).style("text-anchor", "middle").style("font-size", "9px").text(xVar.label);
+    svg.append("text").attr("transform", "rotate(-90)").attr("x", -miniHeight / 2).attr("y", 10).style("text-anchor", "middle").style("font-size", "9px").text(yVar.label);
+  });
 };
 
 // ==========================================
-// MISE À JOUR DES OPTIONS DE PAYS
+// OVERLAY CHART FUNCTIONALITY
+// ==========================================
+function openChartOverlay(chartData, title, config, xVar, yVar, colorScale, globalXExtent, globalYExtent) {
+  const backdrop = d3.select("#chart-overlay-backdrop");
+  const container = d3.select("#overlay-chart-container");
+  const titleEl = d3.select("#overlay-title");
+
+  backdrop.classed("active", true);
+  titleEl.text(`${title} : ${xVar.label} vs ${yVar.label}`);
+
+  container.selectAll("*").remove();
+
+  const rect = container.node().getBoundingClientRect();
+  const width = rect.width;
+  const height = rect.height || 500;
+
+  const margin = { top: 20, right: 30, bottom: 50, left: 60 };
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  const svg = container.append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+  const g = svg.append("g")
+      .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  const xScale = d3.scaleLinear()
+    .domain([globalXExtent[0] * 0.95, globalXExtent[1] * 1.05])
+    .range([0, innerWidth]).nice();
+
+  const yScale = d3.scaleLinear()
+    .domain([globalYExtent[0] * 0.95, globalYExtent[1] * 1.05])
+    .range([innerHeight, 0]).nice();
+  // Grille X
+  g.append("g").attr("class", "grid").attr("transform", `translate(0,${innerHeight})`)
+    .call(d3.axisBottom(xScale).tickSize(-innerHeight).tickFormat(""))
+    .style("stroke-dasharray", "3,3").style("stroke", "#e0e0e0").style("stroke-opacity", 0.5);
+  // Grille Y
+  g.append("g").attr("class", "grid")
+    .call(d3.axisLeft(yScale).tickSize(-innerWidth).tickFormat(""))
+    .style("stroke-dasharray", "3,3").style("stroke", "#e0e0e0").style("stroke-opacity", 0.5);
+
+  // Axes
+  g.append("g").attr("transform", `translate(0,${innerHeight})`).call(d3.axisBottom(xScale));
+  g.append("g").call(d3.axisLeft(yScale));
+
+  svg.append("text").attr("x", width / 2).attr("y", height - 10).style("text-anchor", "middle").text(xVar.label);
+  svg.append("text").attr("transform", "rotate(-90)").attr("x", -height / 2).attr("y", 20).style("text-anchor", "middle").text(yVar.label);
+
+  const tooltip = d3.select("#scatter-tooltip"); 
+  const circleRadius = config.style.circleRadius || 5;
+
+  g.selectAll("circle")
+    .data(chartData)
+    .join("circle")
+    .attr("cx", d => xScale(xVar.accessor(d)))
+    .attr("cy", d => yScale(yVar.accessor(d)))
+    .attr("r", circleRadius)
+    .style("fill", d => colorScale(d.phase))
+    .style("opacity", 0.7)
+    .style("stroke", "white")
+    .style("stroke-width", 1)
+    .style("cursor", "pointer")
+
+    .on("mouseover", function(event, d) {
+      d3.select(this).transition().duration(200).attr("r", circleRadius * 1.5).style("opacity", 1);
+      
+      let extra = "";
+      if (d.fishing != null) extra += `Fishing: ${d.fishing.toFixed(0)} t<br/>`;
+      if (d.oni != null) extra += `ONI: ${d.oni.toFixed(2)} (${d.phase})<br/>`;
+
+      tooltip.style("visibility", "visible")
+        .html(`<strong>${d.country} (${d.year})</strong><br/>Phase: <span style="color: ${colorScale(d.phase)}">${d.phase}</span><br/>${xVar.label}: ${xVar.format(xVar.accessor(d))}${xVar.unit}<br/>${yVar.label}: ${yVar.format(yVar.accessor(d))}${yVar.unit}<br/>${extra}`);
+    })
+    .on("mousemove", function(event) {
+      tooltip
+        .style("top", (event.pageY - 10) + "px")
+        .style("left", (event.pageX + 10) + "px");
+    })
+    .on("mouseout", function() {
+      d3.select(this).transition().duration(200).attr("r", circleRadius).style("opacity", 0.7);
+      tooltip.style("visibility", "hidden");
+    });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const backdrop = document.getElementById('chart-overlay-backdrop');
+    const closeBtn = document.getElementById('overlay-close-btn');
+
+    if (backdrop && closeBtn) {
+        const closeOverlay = () => {
+            backdrop.classList.remove('active');
+            d3.select("#scatter-tooltip").style("visibility", "hidden");
+        };
+
+        closeBtn.addEventListener('click', closeOverlay);
+
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop) {
+                closeOverlay();
+            }
+        });
+        
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && backdrop.classList.contains('active')) {
+                closeOverlay();
+            }
+        });
+    }
+});
+
+// ==========================================
+// UPDATE COUNTRY OPTIONS
 // ==========================================
 const updateCountryOptions = (data) => {
   const countrySelect = d3.select("#country-filter");
   const currentValue = countrySelect.property("value");
   
-  // Ne garder que l'option "Tous les pays"
+  // Keep only the "All countries" option
   countrySelect.selectAll("option:not([value='all'])").remove();
   
-  // Ajouter les pays de la data actuelle
+  // Add countries from current data
   const countries = [...new Set(data.map(d => d.country))].sort();
   
   countries.forEach(country => {
@@ -552,17 +855,17 @@ const updateCountryOptions = (data) => {
       .text(country);
   });
   
-  // Restaurer la valeur si elle existe encore
+  // Restore value if it still exists
   if (currentValue !== "all" && countries.includes(currentValue)) {
     countrySelect.property("value", currentValue);
   }
 };
 
 // ==========================================
-// ATTACHER LES EVENT LISTENERS
+// ATTACH EVENT LISTENERS
 // ==========================================
 const attachEventListeners = (config) => {
-  // Supprimer les anciens listeners pour éviter les doublons
+  // Remove old listeners to avoid duplicates
   d3.select("#x-axis-variable").on("change", function() {
     CURRENT_X_VAR = this.value;
     applyFilters(config);
@@ -574,7 +877,7 @@ const attachEventListeners = (config) => {
   });
   d3.select("#reset-button").on("click", null);
   
-  // Ajouter les nouveaux listeners
+  // Add new listeners
   d3.select("#country-filter").on("change", function() {
     applyFilters(config);
   });
@@ -585,53 +888,43 @@ const attachEventListeners = (config) => {
   
   d3.select("#reset-button").on("click", function() {
     d3.select("#country-filter").property("value", "all");
-    d3.select("#phase-filter").property("value", "Toutes");
+    d3.select("#phase-filter").property("value", "All");
 
-    // Réinitialiser le slider sur la dernière année
-    const yearSlider = d3.select("#year-slider");
-    if (!yearSlider.empty() && YEAR_DOMAIN) {
-        CURRENT_YEAR = YEAR_DOMAIN.max;
-        yearSlider.property("value", CURRENT_YEAR);
-        d3.select("#year-slider-value").text(CURRENT_YEAR);
-    }
-
-    applyFilters(config); // tout repasse par la même logique
+    applyFilters(config); // everything goes through same logic
     });
 };
 
 // ==========================================
-// APPLIQUER LES FILTRES
+// APPLY FILTERS
 // ==========================================
 const applyFilters = (config) => {
-  const countryValue = d3.select("#country-filter").property("value");
+  const selectedCountries = getSelectedCountries();
   const phaseValue = d3.select("#phase-filter").property("value");
 
-  // Récupérer l'année du slider (si présent)
-  const yearSlider = d3.select("#year-slider");
-  const yearValue = yearSlider.empty() ? null : +yearSlider.property("value");
-  
   let filtered = ORIGINAL_DATA;
-  
-  // Filtre par pays
-  if (countryValue !== "all") {
-    filtered = filtered.filter(d => d.country === countryValue);
+
+  // countries
+  const filterByCountries = selectedCountries.length > 0 && !selectedCountries.includes("all");
+  if (filterByCountries) {
+    filtered = filtered.filter(d => selectedCountries.includes(d.country));
   }
-  
-  // Filtre par phase
-  if (phaseValue !== "Toutes") {
+
+  // phase
+  if (phaseValue !== "All") {
     filtered = filtered.filter(d => d.phase === phaseValue);
   }
 
-  // Filtre par année (si slider défini)
-  if (yearValue !== null && !Number.isNaN(yearValue)) {
-    filtered = filtered.filter(d => d.year <= yearValue);
+  // year - CUMUL : afficher toutes les années jusqu'à l'année sélectionnée
+  if (CURRENT_YEAR !== null && !Number.isNaN(CURRENT_YEAR)) {
+    filtered = filtered.filter(d => d.year <= CURRENT_YEAR);
   }
-  
+
   updateScatterPlot(filtered, config);
+  updateCountryComparison(filtered, config);
 };
 
 // ==========================================
-// STATISTIQUES
+// STATISTICS
 // ==========================================
 const addStatistics = (svg, data, colorScale, totalWidth, totalHeight) => {
   const statsGroup = svg.append("g")
@@ -641,7 +934,7 @@ const addStatistics = (svg, data, colorScale, totalWidth, totalHeight) => {
     .attr("y", 0)
     .style("font-size", "12px")
     .style("font-weight", "bold")
-    .text("Statistiques:");
+    .text("Statistics:");
   
   const phases = ["El Niño", "La Niña", "Neutral"];
   
@@ -664,7 +957,7 @@ const addStatistics = (svg, data, colorScale, totalWidth, totalHeight) => {
 };
 
 // ==========================================
-// GESTION DES ERREURS
+// ERROR HANDLING
 // ==========================================
 const showError = (selector, message) => {
   d3.select(selector)
@@ -675,8 +968,8 @@ const showError = (selector, message) => {
     .style("border", "1px solid #f5c6cb")
     .style("border-radius", "5px")
     .html(`
-      <strong>Erreur de chargement des données:</strong><br/>
+      <strong>Error loading data:</strong><br/>
       ${message}<br/><br/>
-      <small>Assurez-vous que les fichiers CSV sont présents dans python_scripts/data/</small>
+      <small>Make sure CSV files are present in python_scripts/data/</small>
     `);
 };

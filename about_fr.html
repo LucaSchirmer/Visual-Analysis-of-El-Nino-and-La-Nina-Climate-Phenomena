@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="alternate" hreflang="fr" href="about_fr.html">
+    <title>À propos — Analyse Visuelle d'El Niño / La Niña</title>
+    <link rel="stylesheet" href="styles/main.css" />
+    <style>
+        /* Small page-specific helpers while using the main theme */
+        :root{ --maxw:980px; }
+        .container{ max-width:var(--maxw); margin:0 auto; padding:0 16px; }
+        /* Restore nav-row so header items sit in one line (brand, spacer, buttons) */
+        .nav-row{ display:flex; gap:12px; align-items:center; width:100%; }
+        .nav-row .brand{ margin-right:0; }
+        .card{ background:#fff; border-radius:10px; padding:18px; box-shadow:0 6px 18px rgba(20,40,60,.06); }
+        .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        @media (max-width:720px){ .grid-2{grid-template-columns:1fr} }
+        /* Use the scatterplot header gradient to match style */
+        header{ height:7vh; min-height:60px; color:#fff; display:flex; align-items:center; padding:0 18px; background:linear-gradient(135deg,#1b4332 0%,#2d6a4f 100%); box-shadow:0 2px 6px rgba(11,78,139,.12); }
+        /* Ensure content cards have vertical spacing */
+        main{ margin-top: 14px; display: grid; gap:18px; }
+        .brand{ font-weight:600; font-size:1.05rem; color:rgba(255,255,255,0.95); }
+        .btn{ background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12); color:#fff; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:600; display:inline-flex; gap:8px; align-items:center; text-decoration:none; }
+        .btn:hover{ background:rgba(255,255,255,.14); }
+        h1{ margin:0 0 6px 0; font-size:1.35rem; }
+        h2{ margin:0 0 10px 0; font-size:1.05rem; }
+        p{ color:#222; line-height:1.45; margin:0 0 10px 0; }
+        ul{ margin:0 0 10px 18px; color:var(--text-muted, #6c757d); }
+        footer{ color:var(--text-muted, #6c757d); font-size:0.9rem; padding:10px 0; text-align:center; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container nav-row" role="navigation" aria-label="Navigation principale">
+            <div class="brand">Analyse Visuelle D3 — El Niño & La Niña</div>
+            <div style="flex:1"></div>
+            <button class="btn" id="backBtn" title="Retour">
+                ← Retour
+            </button>
+            <a class="btn" href="index.html" title="Accueil">Accueil</a>
+            <a class="btn" href="about.html" title="Anglais">EN</a>
+        </div>
+    </header>
+
+    <div class="container">
+        <main>
+            <section class="card" aria-labelledby="overviewTitle">
+                <h1 id="overviewTitle">À propos de ce projet</h1>
+                <p>
+                    Cette page présente un aperçu concis des jeux de données, des étapes de traitement et 
+                    de la justification des choix de visualisation utilisés dans notre analyse interactive 
+                    du cycle El Niño et La Niña (ENSO).
+                </p>
+                <p style="text-align:right; font-size:0.9rem; color:var(--muted); margin-top:-10px;">
+                    <a href="about.html">Read this page in english →</a>
+                </p>
+            </section>
+
+            <section class="card" aria-labelledby="dataTitle">
+                <h2 id="dataTitle">Jeux de données utilisés</h2>
+                <p>Le projet combine plusieurs jeux de données climatiques et socio-économiques accessibles librement :</p>
+                <ul>
+                    <li><strong>Température de surface de la mer (SST) :</strong> Champs SST mensuels utilisés pour illustrer les anomalies chaudes (El Niño) et froides (La Niña).</li>
+                    <li><strong>Indice ONI / ENSO :</strong> Valeurs officielles de l'Oceanic Niño Index utilisées pour classifier l'intensité et la période des événements ENSO.</li>
+                    <li><strong>Température nationale, précipitations, croissance du PIB :</strong> Indicateurs annuels au niveau des pays permettant d'explorer les impacts potentiels de l'ENSO.</li>
+                    <li><strong>Données de production de pêche :</strong> Utilisées pour visualiser les variations liées à l'ENSO dans l'activité marine, en particulier dans le Pacifique.</li>
+                </ul>
+            </section>
+
+            <section class="card" aria-labelledby="procTitle">
+                <h2 id="procTitle">Traitement des données & Algorithmes</h2>
+                <div class="grid-2">
+                    <div>
+                        <p><strong>Étapes principales de prétraitement :</strong></p>
+                        <ul>
+                            <li>Standardisation des jeux de données sur une base mensuelle ou annuelle.</li>
+                            <li>Nettoyage des valeurs manquantes ou invalides.</li>
+                            <li>Normalisation des valeurs numériques pour des échelles de couleur cohérentes.</li>
+                            <li>Correspondance des codes pays et identifiants géographiques pour relier les données aux formes de la carte.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p><strong>Opérations analytiques :</strong></p>
+                        <ul>
+                            <li>Calcul des anomalies de SST par rapport aux moyennes climatiques.</li>
+                            <li>Mise en évidence des événements El Niño / La Niña à partir des seuils ONI.</li>
+                            <li>Comparaison croisée entre les phases ENSO et les variables nationales (température, précipitations, PIB, pêche).</li>
+                            <li>Filtres interactifs par année et variable pour faciliter l'exploration.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" aria-labelledby="vizTitle">
+                <h2 id="vizTitle">Justification des choix de visualisation</h2>
+                <p>Nos choix visuels reposent sur la clarté, la pertinence géographique et l'interactivité :</p>
+                <ul>
+                    <li><strong>Carte du monde :</strong> L'ENSO est un phénomène global prenant naissance dans l'océan Pacifique. Une carte mondiale montre clairement l'origine et les impacts dans chaque pays.</li>
+                    <li><strong>Coloration océanique (anomalies SST rouge/bleu) :</strong> Cette échelle est le standard scientifique pour représenter El Niño (chaud) et La Niña (froid).</li>
+                    <li><strong>Carte choroplèthe par pays :</strong> Permet de comparer température, précipitations, croissance du PIB et production de pêche pour chaque année.</li>
+                    <li><strong>Contrôles interactifs :</strong> Le changement de variable et d'année facilite l'exploration libre des données.</li>
+                    <li><strong>Frise chronologique ENSO :</strong> Une timeline horizontale met en évidence les années El Niño (rouge) et La Niña (bleu).</li>
+                </ul>
+                <p>
+                    Cette combinaison offre une représentation intuitive et scientifiquement fondée des liens entre anomalies océaniques et impacts climatiques ou socio-économiques.
+                </p>
+            </section>
+
+            <footer class="card" role="contentinfo">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+                    <div style="color:var(--muted)">2025 Créé pour le Challenge Open Data</div>
+                    </div>
+            </footer>
+
+        </main>
+    </div>
+
+    <script>
+        // Bouton retour : historique navigateur ou page d'accueil
+        document.getElementById('backBtn').addEventListener('click', function(){
+            if (history.length > 1) history.back();
+            else window.location.href = 'index.html';
+        });
+    </script>
+</body>
+</html>
