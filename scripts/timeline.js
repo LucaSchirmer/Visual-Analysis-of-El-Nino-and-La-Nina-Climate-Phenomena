@@ -265,7 +265,9 @@ function setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle
 function startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition) {
     const minX = 40;
     const maxX = frameWidth - 40;
-    const step = (maxX - minX) / 200;
+    const totalDistance = maxX - minX;
+
+    const step = totalDistance / 900;
     
     playbackState.interval = setInterval(() => {
         const currentX = cursorData.x;
@@ -280,10 +282,8 @@ function startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getD
             cursorData.x = newX;
             cursorHandle.attr("cx", newX);
             
-            if (Math.floor(currentX / step) % 5 === 0) {
-                const dataPoint = getDataAtPosition(newX);
-                onSlidedCursor(dataPoint);
-            }
+            const dataPoint = getDataAtPosition(newX);
+            onSlidedCursor(dataPoint);
         }
     }, playbackState.speed);
 }
@@ -601,7 +601,7 @@ const createTimelineScale = async () => {
     const { cursorHandle, cursorData } = createCursor(window, x, data, frameHeight);
     
     // Create playback controls
-    const playbackState = { isPlaying: false, interval: null, speed: 100 };
+    const playbackState = { isPlaying: false, interval: null, speed: 150 };
     const controls = createPlaybackControls(window, frameWidth, frameHeight);
     
     // Create magnifier
