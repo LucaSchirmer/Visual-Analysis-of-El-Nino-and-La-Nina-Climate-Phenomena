@@ -6,26 +6,30 @@
   <title>D3 El niño and La niña Visualization</title>
   <link rel="stylesheet" href="styles/main.css" />
 </head>
+
 <body>
 <header class="main-header">
     <nav class="main-navigation">
         <ul>
             <li><a href="index.html">Home</a></li>
             <li><a href="map.html">World Map</a></li>
-            <li><a href="scatterplot.html" class="active">Scatterplot</a></li>
+            <li><a href="scatterplot.html">Scatterplot</a></li>
         </ul>
     </nav>
+    <div id="nav-dataset-switch" class="dataset-switch" aria-label="Dataset selector">
+    </div>
 </header>
 
 <main class="content">
   <h1 class="main-headline">D3 Visual Analysis — El Niño & La Niña </h1>
-  
-  <!-- Timeline -->
+  <div class="world-map-chart-wrapper"id="world-map-chart"></div>
+  <div id="sst-toggle-container">
+    <label>
+      <input type="checkbox" id="sst-toggle-checkbox" checked>
+      Show Sea Surface Temperature
+    </label>
+  </div>
   <div id="timeline-chart"></div>
-  
-  <!-- Scatterplot -->
-  <div id="scatterplot-chart"></div>
-  
 </main>
 <div id="chart-overlay-backdrop" class="overlay-backdrop">
   <div class="overlay-content">
@@ -43,18 +47,14 @@
 
 <!-- D3 library -->
 <script src="https://d3js.org/d3.v7.min.js"></script>
-
-<!-- Scatter plot functions -->
-<script src="scripts/scatter-plot.js"></script>
+<!-- TopoJSON library -->
+<script src="https://unpkg.com/topojson-client@3"></script>
+<!-- World map functions -->
+<script src="scripts/world-map.js"></script>
 <!-- Timeline functions -->
 <script src="scripts/timeline.js"></script>
-
-<!-- Initialize both visualizations -->
-<script>
-  createScatterPlot().then(() => {
-    createTimelineScale();
-  });
-</script>
+<!-- Main JS that calls createWorldMap -->
+<script src="scripts/main.js"></script>
 
 </body>
 </html>

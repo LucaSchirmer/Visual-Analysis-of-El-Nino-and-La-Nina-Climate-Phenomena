@@ -1,59 +1,46 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>D3 El niño and La niña Visualization</title>
-  <link rel="stylesheet" href="styles/main.css" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>El Niño & La Niña — Global Visual Analysis</title>
+    <link rel="stylesheet" href="styles/main.css" />
 </head>
-
 <body>
-<header class="main-header">
-    <nav class="main-navigation">
-        <ul>
-            <li><a href="index.html">World Map</a></li>
-            <li><a href="scatterplot.html">Scatterplot</a></li>
-        </ul>
-    </nav>
-    <div id="nav-dataset-switch" class="dataset-switch" aria-label="Dataset selector">
+
+    <div class="hero-background"></div>
+    
+    <div class="hero-overlay"></div>
+
+    <div class="hero-content">
+        <div class="glass-card">
+            <h1>El Niño & La Niña</h1>
+            <p class="subtitle">
+                Explore the global impact of ocean temperature anomalies.<br>
+                An interactive visual analysis of climate and economic correlations.
+            </p>
+
+            <div class="cta-group">
+                <a href="map.html" class="cta-btn cta-primary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M2 12h20"></path><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+                    Explore 3D World Map
+                </a>
+                
+                <a href="scatterplot.html" class="cta-btn cta-secondary">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M8 12h8"></path><path d="M12 8v8"></path></svg>
+                    Analyse Correlations
+                </a>
+            </div>
+            
+            <div style="margin-top: 30px;">
+                <a href="about.html" style="color: rgba(255,255,255,0.6); text-decoration: none; font-size: 0.9rem; border-bottom: 1px dotted rgba(255,255,255,0.4);">About The Project</a>
+            </div>
+        </div>
+
+        <div class="footer-credits">
+            2025 Challenge Open Data &bull; D3.js Visualization
+        </div>
     </div>
-</header>
-
-<main class="content">
-  <h1 class="main-headline">D3 Visual Analysis — El Niño & La Niña </h1>
-  <div class="world-map-chart-wrapper"id="world-map-chart"></div>
-  <div id="sst-toggle-container">
-    <label>
-      <input type="checkbox" id="sst-toggle-checkbox" checked>
-      Show Sea Surface Temperature
-    </label>
-  </div>
-  <div id="timeline-chart"></div>
-</main>
-<div id="chart-overlay-backdrop" class="overlay-backdrop">
-  <div class="overlay-content">
-    <button id="overlay-close-btn">&times;</button>
-    <h2 id="overlay-title"></h2>
-    <div id="overlay-chart-container"></div>
-  </div>
-</div>
-<footer class="main-footer">
-    <p>
-        <a href="about.html" class="footer-link">About</a> — 2025 Created for the Challenge Open Data.
-    </p>
-</footer>
-
-
-<!-- D3 library -->
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<!-- TopoJSON library -->
-<script src="https://unpkg.com/topojson-client@3"></script>
-<!-- World map functions -->
-<script src="scripts/world-map.js"></script>
-<!-- Timeline functions -->
-<script src="scripts/timeline.js"></script>
-<!-- Main JS that calls createWorldMap -->
-<script src="scripts/main.js"></script>
 
 </body>
 </html>
