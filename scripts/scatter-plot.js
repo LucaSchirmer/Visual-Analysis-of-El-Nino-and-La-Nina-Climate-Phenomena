@@ -426,8 +426,11 @@ const integrateGDPIntoData = (originalData, gdpData) => {
 
   // Helpful debug logging for matching quality
   try {
+    console.log('[scatter-plot] integrateGDPIntoData: total rows =', originalData.length, 'attached GDP =', attached, 'missing GDP =', missing);
     const withGdp = out.filter(d => d.gdpGrowth != null).slice(0,10);
     const withoutGdp = out.filter(d => d.gdpGrowth == null).slice(0,10);
+    console.log('[scatter-plot] sample rows WITH GDP:', withGdp);
+    console.log('[scatter-plot] sample rows WITHOUT GDP:', withoutGdp);
   } catch (e) {}
 
   return out;
@@ -1353,10 +1356,13 @@ const applyFilters = (config) => {
             const groupMembers = countryGroups[groupName];
             
             if (groupMembers) {
+                console.log(`Groupe trouvé: "${groupName}" -> ${groupMembers.length} pays`);
                 groupMembers.forEach(c => acceptedKeys.add(normalizeKey(c)));
             } else {
+                console.warn(`ATTENTION: Groupe introuvable dans countryGroups: "${groupName}"`);
                 const foundKey = Object.keys(countryGroups).find(k => normalizeKey(k) === normalizeKey(groupName));
                 if (foundKey) {
+                    console.log(`Récupération via correspondance approximative: "${foundKey}"`);
                     countryGroups[foundKey].forEach(c => acceptedKeys.add(normalizeKey(c)));
                 }
             }
@@ -1397,6 +1403,8 @@ const applyFilters = (config) => {
 
   // Update UI chips
   try { renderSelectedCountryChips(); } catch (e) { /* ignore */ }
+
+  console.log(`Données après filtre: ${filtered.length} points restants.`);
   
   updateScatterPlot(filtered, config);
   updateCountryComparison(filtered, config);
