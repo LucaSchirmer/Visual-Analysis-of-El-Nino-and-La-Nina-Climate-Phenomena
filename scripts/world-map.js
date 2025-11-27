@@ -476,7 +476,7 @@ const createWorldMap = async () => {
             $legend.select('.legend-bar').style('display', 'none');
             $legend.select('.legend-max').style('display', 'none');
             $legend.select('.legend-min').style('display', 'none');
-            $legend.select('.legend-title').text('Fishing (tonnes)');
+            $legend.select('.legend-title').text(`Fishing(tonnes) ${year != null ? year : 'N/A'}`);
             // Remove previous fishing legend then create the size legend
             $legend.select('.fishing-size-legend').remove();
             createSizeLegend(legendContainer, scale, values, v => `${Math.round(v).toLocaleString()} t`);
@@ -700,7 +700,7 @@ const createWorldMap = async () => {
         sstLayer.style('display', null).lower();
 
         sstLegend.style('display', 'flex');
-        sstLegend.select('.legend-title').text(`Sea Surface Temp — ${monthData.month}`);
+        sstLegend.select('.legend-title').text(`Sea Surface Temp — ${year}, ${month ? month : "N/A"}`);
         const stops = 6;
         const gradColors = Array.from({length: stops}, (_, i) => {
             const t = i / (stops - 1);
@@ -734,6 +734,7 @@ const createWorldMap = async () => {
         const meta = appState.loadedData.get(key);
         if (!meta) return;
 
+        // Reset legend display state
         legend.style('display', 'flex');
         d3.select(legend.node()).select('.fishing-size-legend').remove();
         legend.select('.legend-bar').style('display', null);
@@ -743,9 +744,16 @@ const createWorldMap = async () => {
         const yrMap = meta.byYearMean.get(year) || new Map();
         const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
         
+        // --- CHECK FOR NO DATA ---
         if (values.length === 0 && key !== 'fishing') {
             countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
-            legend.select('.legend-title').text('');
+            const ds = DATASETS.find(d => d.key === key);
+            legend.select('.legend-title').text(`${ds ? ds.label : key} — No data for ${year}`);
+            legend.select('.legend-bar').style('display', 'none');
+            legend.select('.legend-max').style('display', 'none');
+            legend.select('.legend-min').style('display', 'none');
+            
+            renderSstLayer();
             return;
         }
 
@@ -762,27 +770,60 @@ const createWorldMap = async () => {
             countriesGroup.selectAll('path')
                 .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
                 .attr('fill', d => colorForGdp(getValueForFeature(d, year, meta)));
-            legend.select('.legend-title').text(`GDP Growth — ${year} (1990–2024)`);
+            
+            legend.select('.legend-title').text(`GDP Growth — ${year} (1990-2024)`);
             const stops = 9;
             const gradColors = Array.from({length: stops}, (_, i) => colorForGdp(absMax - (2 * absMax) * (i / (stops - 1))));
             legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
             legend.select('.legend-max').text(`≥ ${absMax.toFixed(1)}%`);
             legend.select('.legend-min').text(`≤ -${absMax.toFixed(1)}%`);
+
         } else if (key === 'fishing') {
             drawFishingPoints(countries.features, fishingLayer, projection, values, year, meta, width, height, legend.node());
-        } else {
+
+        } else if (key === 'temperature') {
             const minV = d3.min(values), maxV = d3.max(values);
             const colorScale = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
+            
             countriesGroup.selectAll('path')
                 .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
                 .attr('fill', d => {
                     const val = getValueForFeature(d, year, meta);
                     return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
                 });
+
             const ds = DATASETS.find(d => d.key === key);
-            legend.select('.legend-title').text(`${ds ? ds.label : key} — ${year}`);
+            legend.select('.legend-title').text(`${ds ? ds.label : key} — ${year}, ${month ? month : "N/A"}`);
+            
             const stops = 6;
-            const gradColors = Array.from({length: stops}, (_, i) => colorScale(maxV + (minV - maxV) * (i / (stops - 1))));
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxV + (minV - maxV) * t); 
+            });
+            
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(maxV.toFixed(2));
+            legend.select('.legend-min').text(minV.toFixed(2));
+
+        } else {
+            const minV = d3.min(values), maxV = d3.max(values);
+            const colorScale = d3.scaleSequential(d3.interpolateYlGnBu).domain([minV, maxV]);
+
+            countriesGroup.selectAll('path')
+                .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
+                .attr('fill', d => {
+                    const val = getValueForFeature(d, year, meta);
+                    return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
+                });
+            
+            const ds = DATASETS.find(d => d.key === key);
+            legend.select('.legend-title').text(`${ds ? ds.label : key} — ${year}, ${month ? month : "N/A"}`);
+            
+            const stops = 6;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxV + (minV - maxV) * t); 
+            });
             legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
             legend.select('.legend-max').text(maxV.toFixed(2));
             legend.select('.legend-min').text(minV.toFixed(2));

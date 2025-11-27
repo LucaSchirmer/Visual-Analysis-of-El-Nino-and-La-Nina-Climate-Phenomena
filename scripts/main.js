@@ -6,8 +6,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  console.log("Application chargée");
-  
   if (document.querySelector("#world-map-chart")) {
     createWorldMap();
     createTimelineScale();
