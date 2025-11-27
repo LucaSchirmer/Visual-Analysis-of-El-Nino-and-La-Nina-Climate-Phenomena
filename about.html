@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <link rel="alternate" hreflang="en" href="about.html">
+    <link rel="alternate" hreflang="fr" href="about_fr.html">
+    <title>About — Visual Analysis of El Niño / La Niña</title>
+    <link rel="stylesheet" href="styles/main.css" />
+    <style>
+        /* Small page-specific helpers while using the main theme */
+        :root{ --maxw:980px; }
+        .container{ max-width:var(--maxw); margin:0 auto; padding:0 16px; }
+        /* Restore nav-row so header items sit in one line (brand, spacer, buttons) */
+        .nav-row{ display:flex; gap:12px; align-items:center; width:100%; }
+        .nav-row .brand{ margin-right:0; }
+        .card{ background:#fff; border-radius:10px; padding:18px; box-shadow:0 6px 18px rgba(20,40,60,.06); }
+        .grid-2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+        @media (max-width:720px){ .grid-2{grid-template-columns:1fr} }
+        /* Use the scatterplot header gradient to match style */
+        header{ height:7vh; min-height:60px; color:#fff; display:flex; align-items:center; padding:0 18px; background:linear-gradient(135deg,#1b4332 0%,#2d6a4f 100%); box-shadow:0 2px 6px rgba(11,78,139,.12); }
+        /* Ensure content cards have vertical spacing */
+        main{ margin-top: 14px; display: grid; gap:18px; }
+        .brand{ font-weight:600; font-size:1.05rem; color:rgba(255,255,255,0.95); }
+        .btn{ background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12); color:#fff; padding:6px 12px; border-radius:8px; cursor:pointer; font-weight:600; display:inline-flex; gap:8px; align-items:center; text-decoration:none; }
+        .btn:hover{ background:rgba(255,255,255,.14); }
+        h1{ margin:0 0 6px 0; font-size:1.35rem; }
+        h2{ margin:0 0 10px 0; font-size:1.05rem; }
+        p{ color:#222; line-height:1.45; margin:0 0 10px 0; }
+        ul{ margin:0 0 10px 18px; color:var(--text-muted, #6c757d); }
+        footer{ color:var(--text-muted, #6c757d); font-size:0.9rem; padding:10px 0; text-align:center; }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container nav-row" role="navigation" aria-label="Top navigation">
+            <div class="brand">D3 Visual Analysis — El Niño & La Niña</div>
+            <div style="flex:1"></div>
+            <button class="btn" id="backBtn" title="Back">← Back</button>
+            <a class="btn" href="index.html" title="Home">Home</a>
+            <a class="btn" href="about_fr.html" title="Français">FR</a>
+        </div>
+    </header>
+
+    <div class="container">
+        <main>
+            <section class="card" aria-labelledby="overviewTitle">
+                <h1 id="overviewTitle">About This Project</h1>
+                <p>
+                    This page provides a concise overview of the datasets, data processing steps, and the 
+                    justification behind the visualization choices used in our interactive analysis 
+                    of the El Niño and La Niña (ENSO) cycle.
+                </p>
+                <p style="text-align:right; font-size:0.9rem; color:var(--muted); margin-top:-10px;">
+                    <a href="about_fr.html">Lire cette page en français →</a>
+                </p>
+            </section>
+
+            <section class="card" aria-labelledby="dataTitle">
+                <h2 id="dataTitle">Datasets Used</h2>
+                <p>The project combines several openly accessible climate and socio-economic datasets:</p>
+                <ul>
+                    <li><strong><a href="https://psl.noaa.gov">Température de surface de la mer (SST) :</a></strong> Champs SST mensuels utilisés pour illustrer les anomalies chaudes (El Niño) et froides (La Niña).</li>
+                    <li><strong><a href="https://psl.noaa.gov/data/correlation/oni.data">Indice ONI / ENSO :</a></strong> Valeurs officielles de l'Oceanic Niño Index utilisées pour classifier l'intensité et la période des événements ENSO.</li>
+                    <li><strong>
+                        <a href="https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels-monthly-means?tab=overview">Température nationale</a>, 
+                        <a href="https://opendata.dwd.de/climate_environment/GPCC/html/fulldata-monthly_v2022_doi_download.html">Précipitations</a>, 
+                        <a href="https://data.worldbank.org/">Croissance du PIB</a> :</strong> Indicateurs annuels au niveau des pays permettant d'explorer les impacts potentiels de l'ENSO.</li>
+                    <li><strong><a href="https://www.fao.org/fishery/statistics-query/en/capture/capture_quantity">Données de production de pêche</a> :</strong> Utilisées pour visualiser les variations liées à l'ENSO dans l'activité marine, en particulier dans le Pacifique.</li>
+                </ul>
+            </section>
+
+            <section class="card" aria-labelledby="procTitle">
+                <h2 id="procTitle">Data Processing & Algorithms</h2>
+                <div class="grid-2">
+                    <div>
+                        <p><strong>Core preprocessing steps:</strong></p>
+                        <ul>
+                            <li>Standardizing all datasets to a yearly or monthly time scale.</li>
+                            <li>Cleaning missing or invalid values.</li>
+                            <li>Normalizing numerical ranges for consistent color scales.</li>
+                            <li>Matching country codes and map identifiers to allow linking data with geographical shapes.</li>
+                        </ul>
+                    </div>
+                    <div>
+                        <p><strong>Analytical operations:</strong></p>
+                        <ul>
+                            <li>Computing SST anomalies relative to long-term means.</li>
+                            <li>Highlighting El Niño / La Niña events based on ONI thresholds.</li>
+                            <li>Cross-comparing ENSO phases with country-level variables (temperature, rainfall, GDP, fishing outputs).</li>
+                            <li>Interactive filtering by year and variable to support exploratory analysis.</li>
+                        </ul>
+                    </div>
+                </div>
+            </section>
+
+            <section class="card" aria-labelledby="vizTitle">
+                <h2 id="vizTitle">Justification of the Visualization Choices</h2>
+                <p>Our visualization design is based on clarity, geographical relevance, and interactivity:</p>
+                <ul>
+                    <li><strong>World Map:</strong> ENSO is a global phenomenon originating in the Pacific Ocean. A world map clearly shows both the source (ocean anomalies) and the impacts across countries.</li>
+                    <li><strong>Ocean Coloring (Red/Blue SST Anomalies):</strong> This color scale is the scientific standard for visualizing El Niño (warm) and La Niña (cold) phases. It helps users immediately recognize ENSO patterns.</li>
+                    <li><strong>Country-Level Choropleth Map:</strong> Allows comparison of temperature, rainfall, GDP growth, and fishing production for each year, making regional impacts visible.</li>
+                    <li><strong>Interactive Controls:</strong> Switching between variables and years enables free exploration and highlights the temporal evolution of ENSO.</li>
+                    <li><strong>ENSO Timeline:</strong> A horizontal timeline marks strong El Niño (red) and La Niña (blue) years, helping users relate global patterns to specific ENSO events.</li>
+                </ul>
+                <p>
+                    This combination provides a visually intuitive and scientifically grounded representation 
+                    of how oceanic anomalies relate to global climatic and socio-economic patterns.
+                </p>
+            </section>
+            
+            <footer class="card" role="contentinfo">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+                    <div style="color:var(--muted)">2025 Created for the Challenge Open Data</div>
+                    </div>
+            </footer>
+
+        </main>
+    </div>
+
+    <script>
+        // Back button uses browser history if available, otherwise navigates to index.html
+        document.getElementById('backBtn').addEventListener('click', function(){
+            if (history.length > 1) history.back();
+            else window.location.href = 'index.html';
+        });
+    </script>
+</body>
+</html>
