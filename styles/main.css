@@ -122,8 +122,6 @@ body {
   padding: 15px;
   font-size: 0.9rem;
   margin-top: auto;
-  position: relative;
-  z-index: 10000;
 }
 
 .main-headline {
@@ -613,7 +611,9 @@ body {
 
 
 .footer-link {
-    color: white;
+  color: white;   
+  position: relative;
+  z-index: 10000;
 }
 
 body, html {
