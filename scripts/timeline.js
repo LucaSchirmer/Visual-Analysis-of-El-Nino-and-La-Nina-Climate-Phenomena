@@ -58,21 +58,11 @@ function createTimelineAxis(window, x, frameHeight) {
         .tickFormat(d3.timeFormat("%Y"))
         .tickSize(6);
     
-    const axisY = 30;
+    
     const axisGroup = window.append("g")
         .attr("class", "timeline-axis")
         .attr("transform", `translate(0, ${frameHeight / 2})`)
         .call(axis);
-
-    const magnifierYOffset = 22; 
-    const magnifierRectHeight = 80; 
-    const requiredBottom = axisY + magnifierYOffset + magnifierRectHeight +20;
-    const bottomOverflow = Math.max(0, requiredBottom - height);
-    const svgHeight = height + bottomOverflow;
-
-    svg.attr("height", svgHeight);
-
-    container.style.overflow = "visible";
 
     
     styleAxis(axisGroup);
@@ -525,7 +515,6 @@ function setupDragBehavior(cursorHandle, cursorData, frameWidth, frameHeight, ma
     
     return getDataAtPosition;
 }
-
 // EVENT HANDLERS
 
 function onClickEvent(event, d) {
@@ -591,6 +580,18 @@ const createTimelineScale = async () => {
     // Create scale and axis
     const x = createTimeScale(data, frameWidth);
     createTimelineAxis(window, x, frameHeight);
+
+    const axisY = 30;
+    const magnifierYOffset = 22; 
+    const magnifierRectHeight = 80; 
+    const requiredBottom = axisY + magnifierYOffset + magnifierRectHeight +20;
+    const bottomOverflow = Math.max(0, requiredBottom - height);
+    const svgHeight = height + bottomOverflow;
+
+    svg.attr("height", svgHeight);
+
+    container.style.overflow = "visible";
+
     
     // Create event markers
     createEventMarkers(window, strongEvents, x, frameHeight, "strong-event", onClickEvent);
