@@ -102,7 +102,8 @@ const createTimelineScale = async () => {
 
     // ===== DRAGGABLE CURSOR =====
     // Create cursor data object
-    const cursorData = { x: x(data[0].date) };
+    const lastDate = data[data.length - 1].date;
+    const cursorData = { x: x(lastDate) };
     
     // Cursor handle (draggable circle)
     const cursorHandle = window.append("circle")
@@ -258,7 +259,7 @@ const createTimelineScale = async () => {
                 
                 // Position magnifier above cursor, centered
                 const magnifierX = Math.max(10, Math.min(d.x - 70, frameWidth - 150));
-                const magnifierY = frameHeight / 2 - 120;
+                const magnifierY = frameHeight / 2 + 50;
                 magnifier.attr("transform", `translate(${magnifierX}, ${magnifierY})`);
                 
                 // Show magnifier
@@ -300,6 +301,7 @@ function onClickEvent(event, d) {
     // call map updater if available
     if (typeof globalThis.updateMapYear === 'function') {
         try {
+            CURRENT_YEAR = year;
             globalThis.updateMapYear(year);
         } catch (err) {
             console.warn('updateMapYear failed', err);

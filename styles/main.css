@@ -1,189 +1,556 @@
+/* =========================================
+   1. VARIABLES & RESET
+   ========================================= */
 :root {
-    font-size: 16px;
-    /* layout constants so we can compute available content height exactly */
-    --header-height: 7vh;
-    --footer-height: 44px;
-    --timeline-height: 140px;
-    --map-timeline-gap: 60px;
-
-    --color-header-start:       #2f6f4f;
-    --color-header-end:         #3f7a55;
-    --color-header-active:      #333;
-    --color-header-not-active:  #f7f7f7;
-}
-    
-* {
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-}
-
-html, body {
-    width: 100%;
-    height: 100%;
-    overflow: hidden;
-}
-
-/* Header Region */
-
-.content {
-    display: flex;
-    flex-direction: column;
-    width: 100%;
-    /* compute content height as viewport minus fixed header and footer */
-    height: calc(100vh - var(--header-height) - var(--footer-height));
-    margin-top: var(--header-height);
+  /* Gradient Green Palette */
+  --color-primary-dark: #1b4332;   /* Deep dark green */
+  --color-primary-medium: #2d6a4f; /* Leaf green */
+  --color-primary-light: #40916c;  /* Natural green */
+  --color-accent: #74c69d;         /* Mint green for hover/accent */
+  --color-bg-light: #f0f7f4;       /* Very light background, slightly green */
+  
+  /* Neutral Colors & Text */
+  --text-main: #1f2937;
+  --text-muted: #6b7280;
+  --bg-white: #ffffff;
+  --border-color: #d1d5db;
+  
+  /* Shadows & Borders */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  
+  /* Dimensions */
+  --header-height: 70px;
+  --footer-height: 60px;
+  --container-width: 1200px;
 }
 
-/* MAYBE DELETE LATER*/
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  background-color: var(--color-bg-light);
+  color: var(--text-main);
+  line-height: 1.6;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* =========================================
+   2. GLOBAL LAYOUT (Header / Footer)
+   ========================================= */
+
+/* Header with requested green gradient */
 .main-header {
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    justify-content: space-between;
-    align-items: center;
-    background-color: #462;
-    height: 7vh;
-
-    position: fixed;
-    top: 0;
-    width: 100%;
-    z-index: 1000;
-}
-
-.main-navigation a, .main-header h1 {
-    font-size: 1.5rem;
-    text-decoration: none;
-    color: white;
-}
-
-.main-navigation a {
-  position: relative;
-  transition: color 0.2s ease;
-}
-
-.main-navigation a.active {
-  color: var(--color-header-active);
-  font-weight: 600;
-  font-size: 1.6rem;
+  height: var(--header-height);
+  background: linear-gradient(135deg, var(--color-primary-dark) 0%, var(--color-primary-medium) 100%);
+  box-shadow: var(--shadow-md);
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  padding: 0 2rem;
 }
 
 .main-navigation ul {
-    display: flex;
-    width: 25vw;
-    height: 100%;
-
-    justify-content: space-around;
-    align-items: center;
-}
-
-.main-navigation ul li {
+  display: flex;
+  gap: 30px;
   list-style: none;
 }
 
-.main-navigation a.active::after {
-  content: '';
-  position: absolute;
-  bottom: -4px;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: var(--color-header-active);
+.main-navigation a {
+  color: rgba(255, 255, 255, 0.85);
+  text-decoration: none;
+  font-weight: 500;
+  font-size: 1.1rem;
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  transition: all 0.3s ease;
 }
 
-
-
-/* Switch element */
-
-.dataset-switch {
-    display: flex;
-    gap: 6px;
-    margin-left: 16px;
-    align-items: center;
-    justify-content: end;
+.main-navigation a:hover,
+.main-navigation a.active {
+  background-color: rgba(255, 255, 255, 0.2);
+  color: white;
+  transform: translateY(-1px);
 }
 
-.dataset-switch button {
-    appearance: none;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    background: white;
-    color: #111;
-
-    padding: 6px 10px;
-    margin: 10px;
-
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 14px;
+.content {
+  flex: 1;
+  width: 100%;
+  max-width: var(--container-width);
+  margin: 0 auto;
+  padding: 40px 20px;
 }
 
-.dataset-switch button:hover {
-    filter: brightness(0.98);
-}
-
-.dataset-switch button.selected {
-    background: #111;
-    color: #fff;
-    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset;
-}
-
-/* Visible focus style for keyboard users */
-.dataset-switch button:focus {
-    outline: 2px solid rgba(0, 123, 255, 0.25);
-    outline-offset: 2px;
-}
-/* end Switch Element */
-/* end Header Region */
-
-
-
-/* World Map region */
-.world-map-chart-wrapper {
-    width: 100%;
-    /* take remaining height after reserving timeline height */
-    /* subtract an additional gap so the timeline has breathing room */
-    height: calc(100% - var(--timeline-height) - var(--map-timeline-gap));
-    flex: none;
-    position: relative;
-    margin-bottom: var(--map-timeline-gap);
-}
-
-#timeline-chart {
-    width: 100%;
-    height: var(--timeline-height);
-    flex: none;
-    position: relative;
-    overflow: visible !important;
-    display: flex;
-    align-content: center;
-    justify-content: center;
-}
-
-#timeline-chart svg {
-    overflow: visible !important;
-}
-
-.main-header {
-    position: fixed;
-    top: 0;
-    width: 100%;
-    z-index: 1000;
-    height: var(--header-height);
-    display: flex;
-    align-items: center;
-    padding: 0 1rem;
-    background: linear-gradient(90deg, var(--color-header-start), var(--color-header-end));
-}
-
-/* footer region */
 .main-footer {
-    position: fixed;
-    bottom: 0;
+  background-color: var(--color-primary-dark);
+  color: white;
+  text-align: center;
+  padding: 20px;
+  font-size: 0.9rem;
+  margin-top: auto;
+}
+
+.main-headline {
+  font-size: 2rem;
+  color: var(--color-primary-dark);
+  margin-bottom: 30px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: -0.5px;
+}
+
+/* =========================================
+   3. WORLD MAP STYLES
+   ========================================= */
+.world-map-chart-wrapper {
+  background: var(--bg-white);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+  height: 600px; /* Fixed height for the map */
+  width: 100%;
+  border: 1px solid rgba(0,0,0,0.05);
+}
+
+/* =========================================
+   4. TIMELINE STYLES
+   ========================================= */
+#timeline-chart {
+  width: 100%;
+  height: 250px; /* Important for JS to calculate height */
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  margin-bottom: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.timeline-selected {
+  stroke: var(--text-main);
+  stroke-width: 2px;
+}
+
+/* Style of the magnifier (generated by JS) */
+.magnifier rect {
+  fill: rgba(255, 255, 255, 0.95);
+  stroke: var(--color-primary-medium);
+}
+
+.magnifier text {
+  font-family: sans-serif;
+}
+
+/* =========================================
+   5. SCATTERPLOT CONTROLS (Professional Look)
+   ========================================= */
+/* The div generated by JS with id="scatter-controls" */
+#scatter-controls {
+  background: white !important; /* Force override of JS inline style */
+  border-left: 5px solid var(--color-primary-medium);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md) !important;
+  padding: 20px !important;
+  margin-bottom: 30px !important;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px !important;
+  align-items: center;
+}
+
+#scatter-controls label {
+  color: var(--color-primary-dark);
+  font-size: 0.9rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Style of inputs and selects */
+#scatter-controls select {
+  padding: 8px 12px !important;
+  border: 1px solid var(--border-color) !important;
+  border-radius: 6px !important;
+  background-color: var(--bg-light);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  min-width: 150px;
+}
+
+#scatter-controls select:focus {
+  outline: none;
+  border-color: var(--color-primary-light) !important;
+  box-shadow: 0 0 0 3px rgba(64, 145, 108, 0.2);
+}
+
+#scatter-controls select[multiple] {
+  height: auto;
+  min-height: 40px;
+  max-height: 120px;
+}
+
+#reset-button {
+  background-color: var(--color-primary-medium) !important;
+  color: white !important;
+  font-weight: 600;
+  padding: 10px 20px !important;
+  border-radius: 6px !important;
+  transition: background-color 0.2s, transform 0.1s;
+  box-shadow: var(--shadow-sm);
+  margin-left: auto !important; /* Push button to the right */
+}
+
+#reset-button:hover {
+  background-color: var(--color-primary-dark) !important;
+  transform: translateY(-1px);
+}
+
+#reset-button:active {
+  transform: translateY(1px);
+}
+
+/* =========================================
+   2. GLOBAL LAYOUT
+   ========================================= */
+/* ... keep the header ... */
+
+.content {
+  flex: 1;
+  width: 100%;
+  /* MODIFICATION: Significantly expand the content area width */
+  max-width: 1800px; 
+  margin: 0 auto;
+  padding: 30px 20px;
+}
+
+/* ... keep the footer ... */
+
+
+/* =========================================
+   6. SCATTERPLOT LAYOUT (DASHBOARD MODE)
+   ========================================= */
+
+/* Main container becomes a grid */
+#scatterplot-chart {
+  display: grid;
+  /* Column definition: 
+     - 65% for the large chart
+     - The rest (1fr) for the small charts */
+  grid-template-columns: 65% 1fr; 
+  gap: 20px;
+  align-items: start; /* Align elements at the top */
+}
+
+/* Controls take the full width at the top (Row 1) */
+#scatter-controls {
+  grid-column: 1 / -1; /* Extends from column 1 to the end */
+  background: white !important;
+  border-left: 5px solid var(--color-primary-medium);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md) !important;
+  padding: 15px 20px !important;
+  margin-bottom: 10px !important;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px !important;
+  align-items: center;
+}
+
+/* Large chart (Left column) */
+#scatter-svg-container {
+  grid-column: 1 / 2; /* Stays in the first column */
+  background: white;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 10px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 600px;
+  /* Trick to make SVG responsive if needed */
+  overflow: hidden; 
+}
+/* Ensure the SVG doesn't overflow */
+#scatter-svg-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+
+/* =========================================
+   7. COUNTRY COMPARISON (RIGHT COLUMN)
+   ========================================= */
+
+#country-comparison-container {
+  grid-column: 2 / 3; /* Places in the right column */
+  
+  /* Internal grid for small charts */
+  display: grid !important;
+  /* Force 1 or 2 columns depending on available space on the right */
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); 
+  gap: 15px !important;
+  
+  /* SCROLL MANAGEMENT: 
+     Set a max height so this column scrolls 
+     independently from the page */
+  max-height: 700px; 
+  overflow-y: auto;
+  padding: 5px; /* Small padding to not cut off shadows */
+  
+  /* Styled scrollbar (optional, for Webkit/Chrome) */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary-light) #f1f1f1;
+}
+
+/* Style of individual cards */
+#country-comparison-container > div {
+  background: white !important;
+  border: 1px solid rgba(0,0,0,0.05) !important;
+  border-radius: var(--radius-lg) !important;
+  box-shadow: var(--shadow-sm) !important;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-bottom: 10px !important;
+}
+
+#country-comparison-container > div:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-md) !important;
+  border-color: var(--color-primary-light) !important;
+}
+
+/* Country title */
+#country-comparison-container > div > div:first-child {
+  width: 100%;
+  background: linear-gradient(to right, var(--bg-light), white);
+  color: var(--color-primary-dark);
+  padding: 8px 0;
+  border-bottom: 1px solid #e5e7eb;
+  font-weight: 700 !important;
+  font-size: 12px !important;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* =========================================
+   RESPONSIVE (Mobile)
+   ========================================= */
+@media (max-width: 1100px) {
+  /* If screen is too small, switch back to single column */
+  #scatterplot-chart {
+    grid-template-columns: 1fr;
+  }
+  
+  #scatter-svg-container {
+    grid-column: 1 / -1;
+  }
+  
+  #country-comparison-container {
+    grid-column: 1 / -1;
+    max-height: none; /* Remove internal scroll on mobile */
+    overflow-y: visible;
+  }
+}
+
+/* =========================================
+   8. TOOLTIP
+   ========================================= */
+#scatter-tooltip {
+  background-color: rgba(27, 67, 50, 0.95) !important; /* Very dark green almost black */
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(255,255,255,0.1);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+  color: #fff !important;
+  padding: 12px 16px !important;
+  border-radius: 8px !important;
+  line-height: 1.5;
+  font-size: 0.85rem !important;
+  z-index: 10000 !important;
+}
+
+/* Data Loader Status (from data-processing.js) */
+.status {
+  padding: 10px;
+  margin: 5px 0;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.status.loading { background: #e0f2fe; color: #0369a1; }
+.status.success { background: #dcfce7; color: #166534; }
+.status.error { background: #fee2e2; color: #991b1b; }
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .main-navigation ul {
+    gap: 15px;
+  }
+  
+  .main-headline {
+    font-size: 1.5rem;
+  }
+  
+  #scatter-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  #reset-button {
+    margin-left: 0 !important;
     width: 100%;
-    height: var(--footer-height);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    background-color: #f0f0f0;
-    border-top: 1px solid #ccc;
+  }
+}
+
+/* =========================================
+   9. DRAG AND DROP STYLES
+   ========================================= */
+.draggable-card {
+  cursor: grab; /* "Open hand" cursor */
+  transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+
+.draggable-card:active {
+  cursor: grabbing; /* "Closed hand" cursor when clicked */
+}
+
+/* Class automatically applied during drag */
+.draggable-card.dragging {
+  opacity: 0.4;
+  border: 2px dashed var(--color-primary-medium) !important;
+  transform: scale(0.95);
+}
+
+/* =========================================
+   10. OVERLAY / MODAL STYLES
+   ========================================= */
+/* Dark blurred background */
+.overlay-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5); /* Semi-transparent background */
+  backdrop-filter: blur(5px); /* Blur effect on the background */
+  z-index: 9000; /* Very high to pass in front of everything */
+  display: none; /* Hidden by default */
+  justify-content: center;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+/* Active class to display overlay with transition */
+.overlay-backdrop.active {
+  display: flex;
+  opacity: 1;
+}
+
+/* White container of the chart in the center */
+.overlay-content {
+  background: white;
+  padding: 30px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 90%;
+  max-width: 1000px; /* Max width */
+  height: 80vh; /* 80% of screen height */
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  transform: scale(0.9);
+  transition: transform 0.3s ease;
+}
+
+.overlay-backdrop.active .overlay-content {
+  transform: scale(1);
+}
+
+/* Close button (X) */
+#overlay-close-btn {
+  position: absolute;
+  top: 15px;
+  right: 20px;
+  font-size: 28px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+
+#overlay-close-btn:hover {
+  color: var(--color-primary-dark);
+}
+
+/* Title in overlay */
+#overlay-title {
+  margin-bottom: 20px;
+  color: var(--color-primary-dark);
+  text-align: center;
+}
+
+/* SVG container flex to take remaining space */
+#overlay-chart-container {
+  flex: 1;
+  min-height: 0; /* Important for flex */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* --- Expand button styles on small cards --- */
+
+/* Necessary to position button absolute relative to card */
+.draggable-card {
+  position: relative; 
+}
+
+.expand-card-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px;
+  opacity: 0; /* Hidden by default */
+  transition: opacity 0.2s ease, background-color 0.2s;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.expand-card-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: var(--text-muted);
+}
+
+/* Show button on card hover */
+.draggable-card:hover .expand-card-btn {
+  opacity: 1;
+}
+
+.expand-card-btn:hover {
+  background: var(--color-primary-light);
+}
+.expand-card-btn:hover svg {
+  fill: white;
 }
