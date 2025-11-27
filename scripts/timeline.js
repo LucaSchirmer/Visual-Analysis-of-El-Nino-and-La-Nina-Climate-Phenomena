@@ -1,55 +1,58 @@
-const createTimelineScale = async () => {
-    const container = document.getElementById("timeline-chart");
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    
-    const svg = d3.select("#timeline-chart")
-        .append("svg")
-        .attr("width", width)
-        .attr("height", height);
-    
-    // Define the window/frame dimensions
-    const margin = { top: 0, right: 60, bottom: 60, left: 60 };
-    const frameWidth = width - margin.left - margin.right;
-    const frameHeight = height - margin.top - margin.bottom;
-    
-    // Create a rounded rectangle background window
-    const window = svg.append("g")
-        .attr("transform", `translate(${margin.left}, ${margin.top})`);
-    
-    // Data collection
+
+// DATA LOADING & PROCESSING
+
+async function loadTimelineData() {
     const data = await d3.csv("python_scripts/data/oni_monthly.csv", d => ({
         date: new Date(d.date),
         phase: d.phase,
         intensity: d.intensity
     }));
-    
+    return data;
+}
+
+function extractEvents(data) {
     const strongEvents = [];
     const everyEvents = [];
+
     for (let i = 1; i < data.length; i++) {
         const prev = data[i - 1];
         const curr = data[i];
+
+        const isStrongish = ["Strong", "Very Strong"].includes(curr.intensity);
+        const prevStrongish = ["Strong", "Very Strong"].includes(prev.intensity);
+
+        const phaseChanged = prev.phase !== curr.phase;
+        const intensityChanged = curr.intensity !== prev.intensity;
+
         if (
             (curr.phase === "La Niña" || curr.phase === "El Niño") &&
-            curr.intensity === "Strong" &&
-            (prev.phase !== curr.phase || prev.intensity !== "Strong")
+            isStrongish &&
+            (phaseChanged || intensityChanged)
         ) {
             strongEvents.push(curr);
         }
+
         everyEvents.push(curr);
     }
-    
-    // Scale within the frame
-    const x = d3.scaleTime()
+    return { strongEvents, everyEvents };
+}
+
+
+// SCALE & AXIS CREATION
+
+
+function createTimeScale(data, frameWidth) {
+    return d3.scaleTime()
         .domain(d3.extent(data.map(d => d.date)))
         .range([40, frameWidth - 40]);
-    
+}
+
+function createTimelineAxis(window, x, frameHeight) {
     const regularYears = d3.timeYear.every(5).range(
         x.domain()[0],
         x.domain()[1]
     );
     
-    // Style
     const axis = d3.axisBottom(x)
         .tickValues(regularYears)
         .tickFormat(d3.timeFormat("%Y"))
@@ -60,6 +63,12 @@ const createTimelineScale = async () => {
         .attr("transform", `translate(0, ${frameHeight / 2})`)
         .call(axis);
     
+    styleAxis(axisGroup);
+    
+    return axisGroup;
+}
+
+function styleAxis(axisGroup) {
     axisGroup.select(".domain")
         .attr("stroke", "#d0d0d0")
         .attr("stroke-width", 3)
@@ -73,47 +82,48 @@ const createTimelineScale = async () => {
         .attr("fill", "#666")
         .attr("font-size", "12px")
         .attr("font-weight", "500");
-    
-    const strongEventGroup = window.selectAll(".strong-event")
-        .data(strongEvents)
+}
+
+// EVENT MARKERS
+
+function createEventMarkers(window, events, x, frameHeight, className, clickHandler) {
+    const eventGroup = window.selectAll(`.${className}`)
+        .data(events)
         .enter()
         .append("g")
-        .attr("class", "strong-event")
+        .attr("class", className)
         .attr("transform", d => `translate(${x(d.date)}, ${frameHeight / 2})`);
-
-    const eventGroup = window.selectAll(".events")
-        .data(everyEvents)
-        .enter()
-        .append("g")
-        .attr("class", "event")
-        .attr("transform", d => `translate(${x(d.date)}, ${frameHeight / 2})`);
-
-    // Event markers - tiny rectangles like ticks
-    strongEventGroup.append("rect")
-        .attr("x", -2.5)
-        .attr("y", -9)
-        .attr("width", 5)
-        .attr("height", 18)
-        .attr("rx", 2)
-        .attr("fill", d => d.phase === "El Niño" ?  "#072b8d" : "#AA0000")
-        .attr("cursor", "pointer")
-        .on("click", onClickEvent);
     
-    // Add labels on hover with month and year
-    strongEventGroup.append("title")
-        .text(d => {
-            const monthYear = d.date.toLocaleDateString('en-US', { 
-                month: 'long', 
-                year: 'numeric' 
+    if (clickHandler) {
+        eventGroup.append("circle")
+            .attr("x", -2.5)
+            .attr("y", -9)
+            .attr("r", 4)
+            .attr("rx", 2)
+            .attr("fill", d => d.phase === "El Niño" ? "#072b8d" : "#AA0000")
+            .attr("cursor", "pointer")
+            .on("click", clickHandler);
+        
+        eventGroup.append("title")
+            .text(d => {
+                const monthYear = d.date.toLocaleDateString('en-US', { 
+                    month: 'long', 
+                    year: 'numeric' 
+                });
+                return `${d.phase} (${d.intensity}) — ${monthYear}`;
             });
-            return `${d.phase} (${d.intensity}) — ${monthYear}`;
-        });
-
-    // Create cursor data object
-    const lastDate = data[data.length - 1].date;
-    const cursorData = { x: x(lastDate) };
+    }
     
-    // Cursor handle (draggable circle)
+    return eventGroup;
+}
+
+// CURSOR
+
+function createCursor(window, x, data, frameHeight) {
+    const firstDate = data[0].date;
+    const cursorData = { x: x(firstDate) };
+
+    
     const cursorHandle = window.append("circle")
         .datum(cursorData)
         .attr("class", "cursor-handle")
@@ -125,12 +135,179 @@ const createTimelineScale = async () => {
         .attr("stroke-width", 2)
         .attr("cursor", "grab");
     
-    // Magnifying glass popup (initially hidden)
+    return { cursorHandle, cursorData };
+}
+
+// PLAYBACK CONTROLS
+
+function createPlaybackControls(window, frameWidth, frameHeight) {
+    const controlsGroup = window.append("g")
+        .attr("class", "playback-controls")
+        .attr("transform", `translate(${frameWidth / 2 - 75}, ${frameHeight / 2 + 50})`);
+    
+    const slowButton = createSpeedButton(controlsGroup, 0, ">");
+    const playButton = createPlayButton(controlsGroup, 45);
+    const stopButton = createStopButton(controlsGroup, 90);
+    const fastButton = createSpeedButton(controlsGroup, 135, ">>");
+    
+    // Initial state: slow is selected
+    slowButton.select("circle").attr("fill", "#888").attr("stroke", "#aaa");
+    
+    return { slowButton, playButton, stopButton, fastButton, controlsGroup };
+}
+
+function createSpeedButton(parent, xOffset, emoji) {
+    const button = parent.append("g")
+        .attr("class", `speed-button-${emoji}`)
+        .attr("transform", `translate(${xOffset}, 0)`)
+        .attr("cursor", "pointer");
+    
+    button.append("circle")
+        .attr("r", 18)
+        .attr("fill", "#666")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 2);
+    
+    button.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "0.35em")
+        .attr("font-size", "20px")
+        .text(emoji);
+    
+    return button;
+}
+
+function createPlayButton(parent, xOffset) {
+    const button = parent.append("g")
+        .attr("class", "play-button")
+        .attr("transform", `translate(${xOffset}, 0)`)
+        .attr("cursor", "pointer");
+    
+    button.append("circle")
+        .attr("r", 18)
+        .attr("fill", "#666")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 2);
+    
+    button.append("path")
+        .attr("d", "M-5,-7 L-5,7 L7,0 Z")
+        .attr("fill", "#fff");
+    
+    return button;
+}
+
+function createStopButton(parent, xOffset) {
+    const button = parent.append("g")
+        .attr("class", "stop-button")
+        .attr("transform", `translate(${xOffset}, 0)`)
+        .attr("cursor", "pointer")
+        .style("opacity", 0.5);
+    
+    button.append("circle")
+        .attr("r", 18)
+        .attr("fill", "#666")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 2);
+    
+    button.append("rect")
+        .attr("x", -5)
+        .attr("y", -5)
+        .attr("width", 10)
+        .attr("height", 10)
+        .attr("fill", "#fff");
+    
+    return button;
+}
+
+function setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition) {
+    const { slowButton, playButton, stopButton, fastButton } = controls;
+    
+    slowButton.on("click", () => {
+        playbackState.speed = 150;
+        slowButton.select("circle").attr("fill", "#888").attr("stroke", "#aaa");
+        fastButton.select("circle").attr("fill", "#666").attr("stroke", "#999");
+        
+        if (playbackState.isPlaying) {
+            clearInterval(playbackState.interval);
+            startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+        }
+    });
+    
+    fastButton.on("click", () => {
+        playbackState.speed = 30;
+        fastButton.select("circle").attr("fill", "#888").attr("stroke", "#aaa");
+        slowButton.select("circle").attr("fill", "#666").attr("stroke", "#999");
+        
+        if (playbackState.isPlaying) {
+            clearInterval(playbackState.interval);
+            startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+        }
+    });
+    
+    playButton.on("click", () => {
+        if (!playbackState.isPlaying) {
+            playbackState.isPlaying = true;
+            playButton.style("opacity", 0.5);
+            stopButton.style("opacity", 1);
+            startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+        }
+    });
+    
+    stopButton.on("click", () => {
+        if (playbackState.isPlaying) {
+            stopPlayback(playbackState, playButton, stopButton, cursorData, getDataAtPosition);
+        }
+    });
+}
+
+function startPlayback(playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition) {
+    const minX = 40;
+    const maxX = frameWidth - 40;
+    const step = (maxX - minX) / 200;
+    
+    playbackState.interval = setInterval(() => {
+        const currentX = cursorData.x;
+        const newX = currentX + step;
+        
+        if (newX >= maxX) {
+            cursorData.x = minX;
+            cursorHandle.attr("cx", minX);
+            const dataPoint = getDataAtPosition(minX);
+            onSlidedCursor(dataPoint);
+        } else {
+            cursorData.x = newX;
+            cursorHandle.attr("cx", newX);
+            
+            if (Math.floor(currentX / step) % 5 === 0) {
+                const dataPoint = getDataAtPosition(newX);
+                onSlidedCursor(dataPoint);
+            }
+        }
+    }, playbackState.speed);
+}
+
+function stopPlayback(playbackState, playButton, stopButton, cursorData, getDataAtPosition) {
+    playbackState.isPlaying = false;
+    playButton.style("opacity", 1);
+    stopButton.style("opacity", 0.5);
+    
+    if (playbackState.interval) {
+        clearInterval(playbackState.interval);
+        playbackState.interval = null;
+    }
+    
+    const dataPoint = getDataAtPosition(cursorData.x);
+    onSlidedCursor(dataPoint);
+}
+
+
+// MAGNIFIER
+
+function createMagnifier(window) {
     const magnifier = window.append("g")
         .attr("class", "magnifier")
         .style("display", "none");
     
-    // Magnifier background
     magnifier.append("rect")
         .attr("width", 140)
         .attr("height", 80)
@@ -140,11 +317,9 @@ const createTimelineScale = async () => {
         .attr("stroke-width", 2)
         .style("filter", "drop-shadow(0 2px 4px rgba(0,0,0,0.2))");
     
-    // Create zoomed timeline inside magnifier
     const magnifierTimeline = magnifier.append("g")
         .attr("transform", "translate(10, 40)");
     
-    // Magnifier timeline line
     magnifierTimeline.append("line")
         .attr("x1", 0)
         .attr("x2", 120)
@@ -153,11 +328,9 @@ const createTimelineScale = async () => {
         .attr("stroke", "#d0d0d0")
         .attr("stroke-width", 2);
     
-    // Month ticks group
     const monthTicksGroup = magnifierTimeline.append("g")
         .attr("class", "month-ticks");
     
-    // Current position indicator
     const positionIndicator = magnifierTimeline.append("circle")
         .attr("r", 5)
         .attr("cy", 0)
@@ -165,7 +338,6 @@ const createTimelineScale = async () => {
         .attr("stroke", "#fff")
         .attr("stroke-width", 2);
     
-    // Year label at top
     const magnifierYearLabel = magnifier.append("text")
         .attr("x", 70)
         .attr("y", 20)
@@ -174,7 +346,116 @@ const createTimelineScale = async () => {
         .attr("font-weight", "700")
         .attr("fill", "#333");
     
-    // Helper function to get data point from x position
+    return { magnifier, monthTicksGroup, positionIndicator, magnifierYearLabel };
+}
+
+function updateMagnifier(magnifierElements, everyEvents, dataPoint, frameWidth, frameHeight, cursorX) {
+    const { magnifier, monthTicksGroup, positionIndicator, magnifierYearLabel } = magnifierElements;
+    const currentDate = dataPoint.date;
+    const year = currentDate.getFullYear();
+    
+    magnifierYearLabel.text(year);
+    
+    const yearStart = new Date(year, 0, 1);
+    const yearEnd = new Date(year, 11, 31);
+    const monthScale = d3.scaleTime()
+        .domain([yearStart, yearEnd])
+        .range([0, 120]);
+    
+    monthTicksGroup.selectAll("*").remove();
+    
+    const eventsInYear = everyEvents.filter(ev => ev.date.getFullYear() === year);
+    
+    addEventBarsToMagnifier(monthTicksGroup, eventsInYear, monthScale);
+    addMonthTicksToMagnifier(monthTicksGroup, yearStart, yearEnd, monthScale);
+    
+    positionIndicator.attr("cx", monthScale(currentDate));
+    
+    const magnifierX = Math.max(10, Math.min(cursorX - 70, frameWidth - 150));
+    const magnifierY = frameHeight / 2 + 50;
+    magnifier.attr("transform", `translate(${magnifierX}, ${magnifierY})`);
+    magnifier.style("display", "block");
+}
+
+function addEventBarsToMagnifier(monthTicksGroup, eventsInYear, monthScale) {
+    const intensityHeight = { "Neutral": 0, "Weak": 10, "Moderate": 15, "Strong": 25 , "Very Strong" :30};
+    const intensityDarken = { "Neutral": 0.0, "Weak": 0.0, "Moderate": 0.25, "Strong": 0.45 ,"Very Strong" :0.65};
+    
+    function darkenColor(hex, factor) {
+        const f = 1 - factor;
+        const r = Math.round(parseInt(hex.slice(1,3), 16) * f);
+        const g = Math.round(parseInt(hex.slice(3,5), 16) * f);
+        const b = Math.round(parseInt(hex.slice(5,7), 16) * f);
+        return `rgb(${r},${g},${b})`;
+    }
+    
+    const miniEventGroups = monthTicksGroup.selectAll(".mini-event-group")
+        .data(eventsInYear.filter(ev => ev.intensity !== "Neutral"))
+        .enter()
+        .append("g")
+        .attr("class", "mini-event-group");
+    
+    miniEventGroups.append("rect")
+        .attr("class", "mini-event")
+        .attr("x", ev => monthScale(ev.date) - 3.5)
+        .attr("y", ev => -intensityHeight[ev.intensity] / 2)
+        .attr("width", 7)
+        .attr("height", ev => intensityHeight[ev.intensity])
+        .attr("rx", 2)
+        .attr("fill", ev => {
+            let base =
+                ev.phase === "El Niño" ? "#6aa0ff" :
+                ev.phase === "La Niña" ? "#ff6a6a" :
+                "#999";
+            return darkenColor(base, intensityDarken[ev.intensity]);
+        });
+
+    miniEventGroups.append("title")
+        .text(ev => {
+            const monthYear = ev.date.toLocaleDateString('en-US', {
+                month: 'long',
+                year: 'numeric'
+            });
+            return `${ev.phase} (${ev.intensity}) — ${monthYear}`;
+        });
+}
+
+function addMonthTicksToMagnifier(monthTicksGroup, yearStart, yearEnd, monthScale) {
+    const months = d3.timeMonth.range(yearStart, yearEnd);
+    
+    monthTicksGroup.selectAll(".month-tick")
+        .data(months)
+        .enter()
+        .append("line")
+        .attr("class", "month-tick")
+        .attr("x1", d => monthScale(d))
+        .attr("x2", d => monthScale(d))
+        .attr("y1", -5)
+        .attr("y2", 5)
+        .attr("stroke", "#999")
+        .attr("stroke-width", 1);
+    
+    const monthLabels = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
+    monthTicksGroup.selectAll(".month-label")
+        .data(months)
+        .enter()
+        .append("text")
+        .attr("class", "month-label")
+        .attr("x", d => monthScale(d))
+        .attr("y", 20)
+        .attr("text-anchor", "middle")
+        .attr("font-size", "9px")
+        .attr("fill", "#666")
+        .text((d, i) => monthLabels[i]);
+}
+
+// DRAG BEHAVIOR
+
+function setupDragBehavior(cursorHandle, cursorData, frameWidth, frameHeight, magnifierElements, everyEvents, data, x, playbackState, playButton, stopButton) {
+    let hoverTimer = null;
+    let isDragging = false;
+    let lastX = null;
+    
     function getDataAtPosition(xPos) {
         const date = x.invert(xPos);
         const bisect = d3.bisector(d => d.date).left;
@@ -182,167 +463,47 @@ const createTimelineScale = async () => {
         return data[Math.min(index, data.length - 1)];
     }
     
-    // Timer for showing magnifier
-    let hoverTimer = null;
-    let isDragging = false;
-    let lastX = null;
-    
     function dragstarted(event, d) {
+        if (playbackState.isPlaying) {
+            stopPlayback(playbackState, playButton, stopButton, cursorData, getDataAtPosition);
+        }
+        
         d3.select(this).raise().attr("stroke", "black");
         isDragging = true;
         lastX = null;
     }
-
+    
     function dragged(event, d) {
-        // Clamp position to stay within timeline bounds
         const clampedX = Math.max(40, Math.min(frameWidth - 40, event.x));
         d3.select(this).attr("cx", d.x = clampedX);
         
-        // Check if movement is significant (more than 3 pixels)
         const hasMovedSignificantly = lastX === null || Math.abs(clampedX - lastX) > 3;
         
         if (hasMovedSignificantly) {
-            // Clear previous timer
-            if (hoverTimer) {
-                clearTimeout(hoverTimer);
-            }
-            
-            // Hide magnifier while moving
-            magnifier.style("display", "none");
-            
+            if (hoverTimer) clearTimeout(hoverTimer);
+            magnifierElements.magnifier.style("display", "none");
             lastX = clampedX;
         }
         
-        // Set timer to show magnifier if stopped moving
         hoverTimer = setTimeout(() => {
             if (isDragging) {
                 const dataPoint = getDataAtPosition(d.x);
-                const currentDate = dataPoint.date;
-                const year = currentDate.getFullYear();
-                
-                // Update year label
-                magnifierYearLabel.text(year);
-                
-                // Create scale for the 12 months of the current year
-                const yearStart = new Date(year, 0, 1);
-                const yearEnd = new Date(year, 11, 31);
-                const monthScale = d3.scaleTime()
-                    .domain([yearStart, yearEnd])
-                    .range([0, 120]);
-                
-                // Clear previous month ticks
-                monthTicksGroup.selectAll("*").remove();
-
-                const eventsInYear = everyEvents.filter(ev => ev.date.getFullYear() === year);
-
-                // Intensity → height scale
-                const intensityHeight = {
-                    "Weak": 10,
-                    "Moderate": 15,
-                    "Strong": 25
-                };
-
-                // Intensity → darkening factor (0 = unchanged, 0.5 = much darker)
-                const intensityDarken = {
-                    "Weak": 0.0,
-                    "Moderate": 0.25,
-                    "Strong": 0.45
-                };
-
-                function darkenColor(hex, factor) {
-                    const f = 1 - factor;
-                    const r = Math.round(parseInt(hex.slice(1,3), 16) * f);
-                    const g = Math.round(parseInt(hex.slice(3,5), 16) * f);
-                    const b = Math.round(parseInt(hex.slice(5,7), 16) * f);
-                    return `rgb(${r},${g},${b})`;
-                }
-
-                monthTicksGroup.selectAll(".mini-event")
-                    .data(eventsInYear)
-                    .enter()
-                    .append("rect")
-                    .attr("class", "mini-event")
-                    .attr("x", ev => monthScale(ev.date) - 3.5)
-                    .attr("y", ev => -intensityHeight[ev.intensity] / 2)
-                    .attr("width", 7)
-                    .attr("height", ev => intensityHeight[ev.intensity])
-                    .attr("rx", 2)
-                    .attr("fill", ev => {
-                        let base =
-                            ev.phase === "El Niño" ?  "#6aa0ff":
-                            ev.phase === "La Niña" ?  "#ff6a6a":
-                            "#999";
-
-                        return darkenColor(base, intensityDarken[ev.intensity]);
-                    })
-                    .append("title")
-                    .text(ev => {
-                        const monthYear = ev.date.toLocaleDateString('en-US', {
-                            month: 'long',
-                            year: 'numeric'
-                        });
-                        return `${ev.phase} (${ev.intensity}) — ${monthYear}`;
-                    });
-
-
-                
-                // Add month ticks
-                const months = d3.timeMonth.range(yearStart, yearEnd);
-                monthTicksGroup.selectAll(".month-tick")
-                    .data(months)
-                    .enter()
-                    .append("line")
-                    .attr("class", "month-tick")
-                    .attr("x1", d => monthScale(d))
-                    .attr("x2", d => monthScale(d))
-                    .attr("y1", -5)
-                    .attr("y2", 5)
-                    .attr("stroke", "#999")
-                    .attr("stroke-width", 1);
-                
-                // Add month labels (J F M A M J J A S O N D)
-                const monthLabels = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
-                monthTicksGroup.selectAll(".month-label")
-                    .data(months)
-                    .enter()
-                    .append("text")
-                    .attr("class", "month-label")
-                    .attr("x", d => monthScale(d))
-                    .attr("y", 20)
-                    .attr("text-anchor", "middle")
-                    .attr("font-size", "9px")
-                    .attr("fill", "#666")
-                    .text((d, i) => monthLabels[i]);
-                
-                // Position indicator at current date
-                const currentX = monthScale(currentDate);
-                positionIndicator.attr("cx", currentX);
-                
-                // Position magnifier above cursor, centered
-                const magnifierX = Math.max(10, Math.min(d.x - 70, frameWidth - 150));
-                const magnifierY = frameHeight / 2 + 50;
-                magnifier.attr("transform", `translate(${magnifierX}, ${magnifierY})`);
-                
-                // Show magnifier
-                magnifier.style("display", "block");
+                updateMagnifier(magnifierElements, everyEvents, dataPoint, frameWidth, frameHeight, d.x);
             }
-        }, 300); 
+        }, 300);
     }
-
+    
     function dragended(event, d) {
         d3.select(this).attr("stroke", null);
         isDragging = false;
         
-        // Clear timer and hide magnifier
-        if (hoverTimer) {
-            clearTimeout(hoverTimer);
-        }
-        magnifier.style("display", "none");
+        if (hoverTimer) clearTimeout(hoverTimer);
+        magnifierElements.magnifier.style("display", "none");
         
         const dataPoint = getDataAtPosition(d.x);
         onSlidedCursor(dataPoint);
     }
-
+    
     const drag = d3.drag()
         .on("start", dragstarted)
         .on("drag", dragged)
@@ -350,19 +511,19 @@ const createTimelineScale = async () => {
     
     cursorHandle.call(drag);
     
-    return x;
-};
+    return getDataAtPosition;
+}
+
+// EVENT HANDLERS
 
 function onClickEvent(event, d) {
-    // visually mark selected event
-    d3.selectAll('.strong-event circle').classed('timeline-selected', false);
+    d3.selectAll('.strong-event rect').classed('timeline-selected', false);
     d3.select(this).classed('timeline-selected', true);
-
+    
     const year = d.date.getFullYear();
-    // call map updater if available
+    
     if (typeof globalThis.updateMapYear === 'function') {
         try {
-            CURRENT_YEAR = year;
             globalThis.updateMapYear(year);
         } catch (err) {
             console.warn('updateMapYear failed', err);
@@ -374,7 +535,7 @@ function onClickEvent(event, d) {
 
 function onSlidedCursor(dataPoint) {
     const year = dataPoint.date.getFullYear();
-    // call map updater if available
+    
     if (typeof globalThis.updateMapYear === 'function') {
         try {
             globalThis.updateMapYear(year);
@@ -385,3 +546,57 @@ function onSlidedCursor(dataPoint) {
         console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity, '-> year', year);
     }
 }
+
+// MAIN INITIALIZATION
+
+const createTimelineScale = async () => {
+    const container = document.getElementById("timeline-chart");
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    
+    const svg = d3.select("#timeline-chart")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height);
+    
+    const margin = { top: 0, right: 60, bottom: 60, left: 60 };
+    const frameWidth = width - margin.left - margin.right;
+    const frameHeight = height - margin.top - margin.bottom;
+    
+    const window = svg.append("g")
+        .attr("transform", `translate(${margin.left}, ${margin.top})`);
+    
+    // Load data
+    const data = await loadTimelineData();
+    const { strongEvents, everyEvents } = extractEvents(data);
+    
+    // Create scale and axis
+    const x = createTimeScale(data, frameWidth);
+    createTimelineAxis(window, x, frameHeight);
+    
+    // Create event markers
+    createEventMarkers(window, strongEvents, x, frameHeight, "strong-event", onClickEvent);
+    createEventMarkers(window, everyEvents, x, frameHeight, "event", null);
+    
+    // Create cursor
+    const { cursorHandle, cursorData } = createCursor(window, x, data, frameHeight);
+    
+    // Create playback controls
+    const playbackState = { isPlaying: false, interval: null, speed: 100 };
+    const controls = createPlaybackControls(window, frameWidth, frameHeight);
+    
+    // Create magnifier
+    const magnifierElements = createMagnifier(window);
+    
+    // Setup drag behavior (returns getDataAtPosition function)
+    const getDataAtPosition = setupDragBehavior(
+        cursorHandle, cursorData, frameWidth, frameHeight,
+        magnifierElements, everyEvents, data, x,
+        playbackState, controls.playButton, controls.stopButton
+    );
+    
+    // Setup playback handlers
+    setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+    
+    return x;
+};
