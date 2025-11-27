@@ -340,7 +340,9 @@ function createSizeLegend(container, scale, values, labelFmt = v => (v == null ?
 }
 
 function getValueForFeature(feature, year, metaData) {
+
     if (!metaData) return null;
+    if (!metaData.byYearMean) return null;
     const yrMap = metaData.byYearMean.get(year);
     if (!yrMap) return null;
 
