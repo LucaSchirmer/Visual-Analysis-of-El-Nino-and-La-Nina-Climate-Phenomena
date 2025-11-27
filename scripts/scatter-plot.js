@@ -426,11 +426,8 @@ const integrateGDPIntoData = (originalData, gdpData) => {
 
   // Helpful debug logging for matching quality
   try {
-    console.log('[scatter-plot] integrateGDPIntoData: total rows =', originalData.length, 'attached GDP =', attached, 'missing GDP =', missing);
     const withGdp = out.filter(d => d.gdpGrowth != null).slice(0,10);
     const withoutGdp = out.filter(d => d.gdpGrowth == null).slice(0,10);
-    console.log('[scatter-plot] sample rows WITH GDP:', withGdp);
-    console.log('[scatter-plot] sample rows WITHOUT GDP:', withoutGdp);
   } catch (e) {}
 
   return out;
@@ -1197,7 +1194,7 @@ const updateCountryOptions = (data) => {
   entries.forEach(([groupName, members], index) => {
     const option = countrySelect.append("option")
       // TODO: maybe think about deparsing the countries of the group 
-      .attr("value", `Group: ${groupName}`)  // prefix: "group:"
+      .attr("value", `group: ${groupName}`)  // prefix: "group:"
       .text(groupName)
       .style("font-style", "italic")
       .style("margin", "3px 0");
@@ -1340,57 +1337,67 @@ const attachEventListeners = (config) => {
 // APPLY FILTERS
 // ==========================================
 const applyFilters = (config) => {
-  const selectedValues = getSelectedCountries();  // values could be "all", individual country, or "group:Name"
+  const selectedValues = getSelectedCountries();
   const phaseValue = d3.select("#phase-filter").property("value");
 
-  let expandedCountries = new Set();
+  let acceptedKeys = null;
+  if (!selectedValues.includes("all")) {
+    acceptedKeys = new Set();
 
-  // If "all" is selected, treat as no filtering on countries
-  if (selectedValues.includes("all")) {
-    expandedCountries = null;
-  } else {
     selectedValues.forEach(val => {
-      if (val.startsWith("group:")) {
-        const groupName = val.slice(6); // remove 'group:' prefix
-        const groupMembers = countryGroups[groupName] || [];
-        groupMembers.forEach(c => expandedCountries.add(c));
+      if (val.toLowerCase().startsWith("group")) {
+        const parts = val.split(':');
+        if (parts.length > 1) {
+            const groupName = parts.slice(1).join(':').trim();
+            
+            const groupMembers = countryGroups[groupName];
+            
+            if (groupMembers) {
+                groupMembers.forEach(c => acceptedKeys.add(normalizeKey(c)));
+            } else {
+                const foundKey = Object.keys(countryGroups).find(k => normalizeKey(k) === normalizeKey(groupName));
+                if (foundKey) {
+                    countryGroups[foundKey].forEach(c => acceptedKeys.add(normalizeKey(c)));
+                }
+            }
+        }
       } else {
-        expandedCountries.add(val);
+        acceptedKeys.add(normalizeKey(val));
       }
     });
   }
 
   let filtered = ORIGINAL_DATA;
 
-  // Filter by expanded countries if applicable
-  if (expandedCountries !== null) {
-    filtered = filtered.filter(d => expandedCountries.has(d.country));
+  // 1. Filtrage par pays (utilisant la comparaison normalisée)
+  if (acceptedKeys !== null) {
+    filtered = filtered.filter(d => {
+        // On vérifie si le pays de la donnée (normalisé) est dans notre liste acceptée
+        return acceptedKeys.has(normalizeKey(d.country));
+    });
   }
 
-  // Filter by phase
+  // 2. Filtrage par phase
   if (phaseValue !== "All") {
     filtered = filtered.filter(d => d.phase === phaseValue);
   }
 
-  // Filter by year slider (cumulative)
+  // 3. Filtrage par année
   if (CURRENT_YEAR !== null && !Number.isNaN(CURRENT_YEAR)) {
     filtered = filtered.filter(d => d.year <= CURRENT_YEAR);
   }
 
-  // If GDP is used on either axis, restrict to years where we actually have GDP
+  // 4. Filtrage GDP (si nécessaire)
   const usingGDP = (CURRENT_X_VAR === "gdpGrowth" || CURRENT_Y_VAR === "gdpGrowth");
   if (usingGDP) {
-    // Don't immediately drop rows with null GDP (accessors/filtering in updateScatterPlot
-    // will remove non-numeric points). Instead, restrict the year range to GDP coverage
-    // so the axis domain is meaningful and the plot won't be empty when comparing to GDP.
     if (GDP_YEAR_RANGE && GDP_YEAR_RANGE.min != null) {
       filtered = filtered.filter(d => d.year >= GDP_YEAR_RANGE.min);
     }
   }
 
-  // Update the selected-country chips visual cue
+  // Update UI chips
   try { renderSelectedCountryChips(); } catch (e) { /* ignore */ }
-
+  
   updateScatterPlot(filtered, config);
   updateCountryComparison(filtered, config);
 };
