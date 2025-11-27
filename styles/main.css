@@ -61,6 +61,37 @@ body {
   padding: 0 2rem;
 }
 
+  .dataset-switch {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .dataset-switch button {
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.08);
+    color: rgba(255,255,255,0.85);
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    opacity: 0.95;
+    transition: background 0.12s ease, transform 0.08s ease, opacity 0.12s ease;
+  }
+
+  .dataset-switch button:hover {
+    background: rgba(255,255,255,0.04);
+    transform: translateY(-1px);
+    opacity: 1;
+  }
+
+  .dataset-switch button.selected {
+    background: rgba(255,255,255,0.10);
+    color: white;
+    font-weight: 600;
+  }
+  
 .main-navigation ul {
   display: flex;
   gap: 30px;
