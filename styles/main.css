@@ -152,6 +152,12 @@ html, body {
     height: var(--timeline-height);
     flex: none;
     position: relative;
+    overflow: visible !important;
+}
+
+#timeline-chart svg {
+    overflow: visible !important;
+}
 
     display: flex;
     align-content: center;
