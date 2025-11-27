@@ -58,10 +58,22 @@ function createTimelineAxis(window, x, frameHeight) {
         .tickFormat(d3.timeFormat("%Y"))
         .tickSize(6);
     
+    const axisY = 30;
     const axisGroup = window.append("g")
         .attr("class", "timeline-axis")
         .attr("transform", `translate(0, ${frameHeight / 2})`)
         .call(axis);
+
+    const magnifierYOffset = 22; 
+    const magnifierRectHeight = 80; 
+    const requiredBottom = axisY + magnifierYOffset + magnifierRectHeight +20;
+    const bottomOverflow = Math.max(0, requiredBottom - height);
+    const svgHeight = height + bottomOverflow;
+
+    svg.attr("height", svgHeight);
+
+    container.style.overflow = "visible";
+
     
     styleAxis(axisGroup);
     
@@ -529,7 +541,7 @@ function onClickEvent(event, d) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Clicked strong event:', d.date, d.phase, d.intensity, '-> year', year);
+        console.log('Clicked strong event:', d.date, d.phase, d.intensity);
     }
 }
 
@@ -538,12 +550,18 @@ function onSlidedCursor(dataPoint) {
     
     if (typeof globalThis.updateMapYear === 'function') {
         try {
-            globalThis.updateMapYear(year);
+            globalThis.updateMapMonth(date);
+        } catch (err) {
+            console.warn('updateMapMonth failed', err);
+        }
+    } else if (typeof globalThis.updateMapYear === 'function') {
+        try {
+            globalThis.updateMapYear(date.getFullYear());
         } catch (err) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity, '-> year', year);
+        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity);
     }
 }
 

@@ -274,7 +274,7 @@ const setupVisualization = (config) => {
   // 1. CREATE CONTROLS (FIRST)
   const controlsDiv = container.append("div")
     .attr("id", "scatter-controls")
-    .style("margin-bottom", "20px")
+    .style("margin-bottom", "0px")
     .style("padding", "15px")
     .style("background-color", "#f8f9fa")
     .style("border-radius", "5px")
@@ -337,7 +337,6 @@ const setupVisualization = (config) => {
     // 2c. CONTAINER FOR COUNTRY COMPARISONS (SMALL MULTIPLES)
     container.append("div")
       .attr("id", "country-comparison-container")
-      .style("margin-top", "20px")
       .style("display", "flex")
       .style("gap", "15px")
       .style("flex-wrap", "wrap");
