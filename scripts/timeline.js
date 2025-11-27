@@ -9,7 +9,7 @@ const createTimelineScale = async () => {
         .attr("height", height);
     
     // Define the window/frame dimensions
-    const margin = { top: 0, right: 60, bottom: 60, left: 60 };
+    const margin = { top: 20, right: 20, bottom: 20, left: 20 };
     const frameWidth = width - margin.left - margin.right;
     const frameHeight = height - margin.top - margin.bottom;
     
@@ -53,10 +53,22 @@ const createTimelineScale = async () => {
         .tickFormat(d3.timeFormat("%Y"))
         .tickSize(6);
     
+    const axisY = 30;
     const axisGroup = window.append("g")
         .attr("class", "timeline-axis")
         .attr("transform", `translate(0, ${frameHeight / 2})`)
         .call(axis);
+
+    const magnifierYOffset = 22; 
+    const magnifierRectHeight = 80; 
+    const requiredBottom = axisY + magnifierYOffset + magnifierRectHeight +20;
+    const bottomOverflow = Math.max(0, requiredBottom - height);
+    const svgHeight = height + bottomOverflow;
+
+    svg.attr("height", svgHeight);
+
+    container.style.overflow = "visible";
+
     
     axisGroup.select(".domain")
         .attr("stroke", "#d0d0d0")
@@ -259,7 +271,7 @@ const createTimelineScale = async () => {
                 
                 // Position magnifier above cursor, centered
                 const magnifierX = Math.max(10, Math.min(d.x - 70, frameWidth - 150));
-                const magnifierY = frameHeight / 2 + 50;
+                const magnifierY = axisY + magnifierYOffset;
                 magnifier.attr("transform", `translate(${magnifierX}, ${magnifierY})`);
                 
                 // Show magnifier
@@ -288,7 +300,7 @@ const createTimelineScale = async () => {
         .on("end", dragended);
     
     cursorHandle.call(drag);
-    
+
     return x;
 };
 
@@ -297,9 +309,14 @@ function onClickEvent(event, d) {
     d3.selectAll('.strong-event circle').classed('timeline-selected', false);
     d3.select(this).classed('timeline-selected', true);
 
-    const year = d.date.getFullYear();
-    // call map updater if available
-    if (typeof globalThis.updateMapYear === 'function') {
+    const date = d.date;
+    if (typeof globalThis.updateMapMonth === 'function') {
+        try {
+            globalThis.updateMapMonth(date);
+        } catch (err) {
+            console.warn('updateMapMonth failed', err);
+        }
+    } else if (typeof globalThis.updateMapYear === 'function') {
         try {
             CURRENT_YEAR = year;
             globalThis.updateMapYear(year);
@@ -307,20 +324,25 @@ function onClickEvent(event, d) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Clicked strong event:', d.date, d.phase, d.intensity, '-> year', year);
+        console.log('Clicked strong event:', d.date, d.phase, d.intensity);
     }
 }
 
 function onSlidedCursor(dataPoint) {
-    const year = dataPoint.date.getFullYear();
-    // call map updater if available
-    if (typeof globalThis.updateMapYear === 'function') {
+    const date = dataPoint.date;
+    if (typeof globalThis.updateMapMonth === 'function') {
         try {
-            globalThis.updateMapYear(year);
+            globalThis.updateMapMonth(date);
+        } catch (err) {
+            console.warn('updateMapMonth failed', err);
+        }
+    } else if (typeof globalThis.updateMapYear === 'function') {
+        try {
+            globalThis.updateMapYear(date.getFullYear());
         } catch (err) {
             console.warn('updateMapYear failed', err);
         }
     } else {
-        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity, '-> year', year);
+        console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity);
     }
 }

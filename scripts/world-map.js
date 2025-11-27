@@ -26,7 +26,6 @@ const COLORS = {
     GDP_GROWTH_NEG: "#a50026",
     FISHING_FILL: "rgba(0,120,180,0.65)",
     FISHING_STROKE: "#044",
-    RAINFALL_STROKE: "#ff4500",
     LEGEND_DEFAULT_BG: "#eee",
 };
 
@@ -35,6 +34,7 @@ const DATASETS = [
     { key: 'gdp', label: 'GDP growth (%)' },
     { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
     { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
+    { key: 'sst', label: 'Sea Surface Temperature (°C)', path: 'python_scripts/data/global_sst.json' }
 ];
 
 const COUNTRY_NAME_MAPPING = {
@@ -142,6 +142,36 @@ function aggregateRows(rows) {
     return { byYearMean, years };
 }
 
+// Fill remaining NaNs by nearest-neighbor search so missing spots get nearest color
+function fillNaNsNearest(arr, cols, rows) {
+    const idx = (x, y) => x + y * cols;
+    const out = arr;
+    const maxR = Math.max(cols, rows);
+    for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+            const i = idx(x, y);
+            if (Number.isFinite(out[i])) continue;
+            let found = false;
+            let foundVal = Number.NaN;
+            for (let r = 1; r < maxR && !found; r++) {
+                const xmin = Math.max(0, x - r);
+                const xmax = Math.min(cols - 1, x + r);
+                const ymin = Math.max(0, y - r);
+                const ymax = Math.min(rows - 1, y + r);
+                for (let yy = ymin; yy <= ymax && !found; yy++) {
+                    for (let xx = xmin; xx <= xmax; xx++) {
+                        if (Math.abs(xx - x) !== r && Math.abs(yy - y) !== r) continue;
+                        const v = out[idx(xx, yy)];
+                        if (Number.isFinite(v)) { found = true; foundVal = v; break; }
+                    }
+                }
+            }
+            if (found) out[i] = foundVal;
+        }
+    }
+    return out;
+}
+
 // ==========================================
 // 3. DATA LOADING
 // ==========================================
@@ -187,6 +217,7 @@ async function fetchDataset(key) {
     if (!ds) return null;
     try {
         if (key === 'gdp') return await loadGDPData();
+        if (key === 'sst') return await d3.json(ds.path);
         if (!ds.path) throw new Error(`Dataset ${key} has no path to load`);
         const rawCsv = await d3.csv(ds.path);
         const parsed = parseRawRows(rawCsv);
@@ -384,7 +415,7 @@ const createWorldMap = async () => {
     // Layers
     const countriesGroup = mapGroup.append('g').attr('class', 'countries-layer');
     const fishingLayer = mapGroup.append('g').attr('class', 'fishing-layer');
-    const rainfallLayer = mapGroup.append('g').attr('class', 'rainfall-layer');
+    const sstLayer = mapGroup.append('g').attr('class', 'sst-layer');
 
     // --- 5. HELPER: REDRAW GEOMETRY (DRY) ---
     // Used by both Drag Rotation and Double-Click Reset
@@ -396,6 +427,21 @@ const createWorldMap = async () => {
         fishingLayer.selectAll('circle.fish')
             .attr('cx', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[0]) ? -9999 : c[0]; })
             .attr('cy', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[1]) ? -9999 : c[1]; });
+
+        // Reposition SST rects
+        sstLayer.selectAll('rect.sst-rect').each(function(d) {
+            const lonAdj = d.lon > 180 ? d.lon - 360 : d.lon;
+            const p = projection([lonAdj, d.lat]);
+            if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) {
+                d3.select(this).attr('x', -9999).attr('y', -9999);
+                return;
+            }
+            d.px = p[0]; d.py = p[1];
+            const w = d.w || 1; const h = d.h || 1;
+            d3.select(this).attr('x', d.px - w/2).attr('y', d.py - h/2);
+        });
+
+        sstLayer.selectAll('path.sst-contour').attr('d', pathGenerator);
     };
 
     // Draw fishing circles with adaptive radius scale
@@ -525,13 +571,33 @@ const createWorldMap = async () => {
     // --- 9. State & Update Logic ---
     const appState = {
         loadedData: new Map(),
+        loadedSSTData: null,
         currentDatasetKey: null,
         currentYear: null,
         selectedDatasets: new Set()
     };
 
-    function updateMapForYear(year) {
+    function updateMapForMonth(input, monthOpt) {
+
+        let year = null;
+        let month = null; // 1-12 or null
+        if (input instanceof Date) {
+            year = input.getFullYear();
+            month = input.getMonth() + 1;
+        } else if (typeof input === 'object' && input != null && input.year != null) {
+            year = +input.year;
+            month = input.month == null ? null : +input.month;
+        } else if (typeof input === 'number') {
+            year = +input;
+            month = monthOpt == null ? null : +monthOpt;
+        } else if (typeof input === 'string') {
+            const d = new Date(input);
+            if (!Number.isNaN(d)) { year = d.getFullYear(); month = d.getMonth() + 1; }
+        }
+
         appState.currentYear = year;
+        appState.currentMonth = month;
+
         const key = appState.currentDatasetKey;
         const meta = appState.loadedData.get(key);
         if (!meta) return;
@@ -541,17 +607,21 @@ const createWorldMap = async () => {
         legend.select('.legend-max').style('display', null);
         legend.select('.legend-min').style('display', null);
 
-        const yrMap = meta.byYearMean.get(year) || new Map();
-        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
-
-        if (values.length === 0) {
-            countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
-            legend.select('.legend-title').text('');
-            return;
+        let values;
+        
+        if (key !== 'sst') {
+            // For non-SST datasets we use the year part of the selection. (TODO adapt when month data available)
+            const yrMap = meta.byYearMean.get(year) || new Map();
+            values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+            if (values.length === 0) {
+                countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
+                legend.select('.legend-title').text('');
+                return;
+            }
         }
 
         fishingLayer.style('display', 'none');
-        rainfallLayer.style('display', 'none');
+        sstLayer.style('display', 'none');
 
         // --- GDP VISUALIZATION ---
         if (key === 'gdp') {
@@ -600,9 +670,6 @@ const createWorldMap = async () => {
                     return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
                 });
 
-            rainfallLayer.selectAll('*').remove();
-            rainfallLayer.style('display', 'none');
-
             // Update legend to reflect rainfall color scale
             legend.select('.legend-title').text(`Rainfall — ${year}`);
             const stops = 6;
@@ -614,6 +681,162 @@ const createWorldMap = async () => {
             legend.select('.legend-max').text(maxV != null ? maxV.toFixed(2) : 'n/a');
             legend.select('.legend-min').text(minV != null ? minV.toFixed(2) : 'n/a');
             
+        // --- SST VISUALIZATION ---
+        } else if (key === 'sst') {
+
+            countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
+
+            const sstData = appState.loadedSSTData;
+            if (!sstData) return;
+
+            const latCount = 18;
+            const lonCount = 36;
+            const latMin = -90;
+            const latMax = 90;
+            const lonMin = 0;
+            const lonMax = 360;
+
+            const latStep = (latMax - latMin) / (latCount - 1);
+            const lonStep = (lonMax - lonMin) / (lonCount - 1);
+
+            const lats = Array.from({length: latCount}, (_, i) => latMin + i * latStep);
+            const lons = Array.from({length: lonCount}, (_, j) => lonMin + j * lonStep);
+
+            let monthData = null;
+            if (year != null) {
+                // If a month is provided, prefer the exact YYYY-MM match.
+                if (month != null) {
+                    const mm = String(month).padStart(2, '0');
+                    const monthStr = `${String(year)}-${mm}`;
+                    monthData = sstData.find(d => d.month === monthStr);
+                }
+                // fallback to January of the year (preserves previous behavior)
+                if (!monthData) {
+                    const monthStr = `${String(year)}-01`;
+                    monthData = sstData.find(d => d.month === monthStr);
+                }
+            }
+
+            if (!monthData){
+                legend.select('.legend-title').text('Data available between 1982/01 and 2023/01');
+                legend.select('.legend-bar').style('background', '');
+                legend.select('.legend-max').text('');
+                legend.select('.legend-min').text('');
+                return;
+            }
+                
+
+            const grid = new Array(lonCount * latCount);
+            for (let i = 0; i < latCount; i++) {
+                for (let j = 0; j < lonCount; j++) {
+                    const raw = monthData.values[i * lonCount + j];
+                    const val = (raw == null || Number.isNaN(raw)) ? NaN : +raw;
+                    const lonAdj = lons[j] > 180 ? lons[j] - 360 : lons[j];
+                    const lat = lats[i];
+                    // If point is on land, mask it as NaN so contours won't cover land
+                    let isLand = false;
+                    for (const feat of countries.features) {
+                        if (d3.geoContains(feat, [lonAdj, lat])) { isLand = true; break; }
+                    }
+                    grid[j + i * lonCount] = isLand ? NaN : val;
+                }
+            }
+
+            const sstValues = grid.filter(v => Number.isFinite(v));
+            const minSST = d3.min(sstValues);
+            const maxSST = d3.max(sstValues);
+
+            // coolwarm diverging scale
+            const coolWarmInterp = d3.interpolateRgbBasis(["#3b4cc0", "#ffffff", "#b40426"]);
+            const colorScale = d3.scaleDiverging(coolWarmInterp).domain([minSST, (minSST + maxSST) / 2, maxSST]);
+
+            const upscale = 3;
+            const uCols = lonCount * upscale;
+            const uRows = latCount * upscale;
+            const upGrid = new Array(uCols * uRows);
+            for (let yi = 0; yi < uRows; yi++) {
+                for (let xi = 0; xi < uCols; xi++) {
+                    const fx = xi / upscale;
+                    const fy = yi / upscale;
+                    const x0 = Math.floor(Math.max(0, Math.min(lonCount - 1, fx)));
+                    const y0 = Math.floor(Math.max(0, Math.min(latCount - 1, fy)));
+                    const x1 = Math.min(lonCount - 1, x0 + 1);
+                    const y1 = Math.min(latCount - 1, y0 + 1);
+                    const sx = fx - x0;
+                    const sy = fy - y0;
+                    const v00 = grid[x0 + y0 * lonCount];
+                    const v10 = grid[x1 + y0 * lonCount];
+                    const v01 = grid[x0 + y1 * lonCount];
+                    const v11 = grid[x1 + y1 * lonCount];
+                    const samples = [
+                        { v: v00, w: (1 - sx) * (1 - sy) },
+                        { v: v10, w: sx * (1 - sy) },
+                        { v: v01, w: (1 - sx) * sy },
+                        { v: v11, w: sx * sy }
+                    ];
+                    let sum = 0, wsum = 0;
+                    for (const s of samples) {
+                        if (Number.isFinite(s.v)) { sum += s.v * s.w; wsum += s.w; }
+                    }
+                    upGrid[xi + yi * uCols] = wsum > 0 ? sum / wsum : Number.NaN;
+                }
+            }
+
+            fillNaNsNearest(upGrid, uCols, uRows);
+
+            const numLevels = 18;
+            const levels = d3.ticks(minSST, maxSST, numLevels);
+            const contourGenerator = d3.contours().size([uCols, uRows]).thresholds(levels);
+            const contours = contourGenerator(upGrid);
+
+            const gridToLonLat = ([x, y]) => {
+                const lon = lonMin + (x / (uCols - 1)) * (lonMax - lonMin);
+                const lat = latMin + (y / (uRows - 1)) * (latMax - latMin);
+                return [lon, lat];
+            };
+
+            const features = contours.map(c => ({
+                type: 'Feature',
+                properties: { value: c.value },
+                geometry: {
+                    type: 'MultiPolygon',
+                    coordinates: c.coordinates.map(polygon => polygon.map(ring => ring.map(gridToLonLat)))
+                }
+            }));
+
+            sstLayer.selectAll('rect.sst-rect').remove();
+
+            const paths = sstLayer.selectAll('path.sst-contour')
+                .data(features, d => String(d.properties.value));
+
+            paths.exit().remove();
+            const enter = paths.enter().append('path').attr('class', 'sst-contour');
+            const geoPath = d3.geoPath().projection(projection);
+
+            paths.merge(enter)
+                .attr('d', d => geoPath(d))
+                .attr('fill', d => colorScale(d.properties.value))
+                .attr('stroke', '#ffffff')
+                .attr('stroke-opacity', 0.18)
+                .attr('stroke-width', 0.2)
+                .attr('opacity', 0.78)
+                .attr('pointer-events', 'none');
+
+            sstLayer.style('display', null);
+            // Place the SST layer behind country shapes so land visually hides contours
+            if (typeof sstLayer.lower === 'function') sstLayer.lower();
+
+            // Update legend for SST
+            legend.select('.legend-title').text(`Sea Surface Temperature — ${monthData.month}`);
+            const stops = 6;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxSST - (maxSST - minSST) * t);
+            });
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(maxSST != null ? maxSST.toFixed(2) : 'n/a');
+            legend.select('.legend-min').text(minSST != null ? minSST.toFixed(2) : 'n/a');
+
         // --- STANDARD VISUALIZATION ---
         } else {
             const minV = d3.min(values), maxV = d3.max(values);
@@ -646,17 +869,61 @@ const createWorldMap = async () => {
 
         if (!appState.loadedData.has(key)) {
             const data = await fetchDataset(key);
+            if (key === 'sst' && data) appState.loadedSSTData = data;
             if (data) appState.loadedData.set(key, data);
         }
 
-        const meta = appState.loadedData.get(key);
-        if (!meta) return;
+        if (key !== 'sst') {
+            const meta = appState.loadedData.get(key);
+            if (!meta) return;
 
-        let targetYear = appState.currentYear;
-        if (!meta.years.includes(targetYear)) {
-            targetYear = meta.years.at(-1) ?? null;
+            sstLayer.style('display', 'none');
+
+            const selYear = appState.currentYear == null ? null : +appState.currentYear;
+            let targetYear = null;
+            if (selYear != null && Array.isArray(meta.years) && meta.years.length > 0) {
+                    targetYear = selYear;
+            } else {
+                // fallback to most recent available year
+                targetYear = (meta.years && meta.years.length) ? meta.years.at(-1) : null;
+            }
+
+            if (targetYear != null) updateMapForMonth({ year: targetYear, month: appState.currentMonth });
+        } else {
+            const sstData = appState.loadedSSTData;
+            if (!sstData) return;
+
+            const selYear = appState.currentYear == null ? null : +appState.currentYear;
+            const selMonth = appState.currentMonth == null ? null : +appState.currentMonth;
+
+            let monthStr = null;
+            if (selYear != null) {
+                if (selMonth != null) {
+                    const mm = String(selMonth).padStart(2, '0');
+                    monthStr = `${selYear}-${mm}`;
+                    if (!sstData.find(d => d.month === monthStr)) monthStr = null;
+                }
+                // fallback to January of that year if exact month not found
+                if (!monthStr) {
+                    const jan = `${selYear}-01`;
+                    if (sstData.find(d => d.month === jan)) monthStr = jan;
+                }
+            }
+
+            if (!monthStr && selYear != null) {
+                // collect months in that year
+                const candidates = sstData.filter(d => d.month && d.month.startsWith(`${selYear}-`)).map(d => d.month);
+                if (candidates.length > 0) monthStr = candidates[0];
+            }
+
+            if (!monthStr) {
+                monthStr = `${selYear}-01`;
+            }
+
+            if (monthStr) {
+                updateMapForMonth(monthStr);
+            }
         }
-        if (targetYear != null) updateMapForYear(targetYear);
     }
 
     // --- 10. Interactions (Tooltip) ---
@@ -705,6 +972,7 @@ const createWorldMap = async () => {
 
     (async () => {
         const preloadPromises = DATASETS.map(d => fetchDataset(d.key).then(data => {
+            if (d.key === 'sst' && data) appState.loadedSSTData = data;
             if (data) appState.loadedData.set(d.key, data);
         }));
         await Promise.all(preloadPromises);
@@ -717,7 +985,7 @@ const createWorldMap = async () => {
         }
     })();
 
-    window.updateMapYear = (year) => {
-        if (appState.currentDatasetKey) updateMapForYear(year);
+    globalThis.updateMapMonth = (arg, month) => {
+        if (appState.currentDatasetKey) updateMapForMonth(arg, month);
     };
 };
