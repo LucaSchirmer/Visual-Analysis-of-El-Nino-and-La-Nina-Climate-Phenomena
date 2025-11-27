@@ -34,7 +34,7 @@ const DATASETS = [
     { key: 'gdp', label: 'GDP growth (%)' },
     { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
     { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
-    { key: 'sst', label: 'Sea Surface Temperature (°C)', path: 'python_scripts/data/global_sst.json' }
+    { key: 'sst', label: 'Sea Surface Temperature (°C)', path: 'python_scripts/data/global_sst.json.gz' }
 ];
 
 const COUNTRY_NAME_MAPPING = {
@@ -212,12 +212,36 @@ async function loadGDPData() {
     return { byYearMean, years };
 }
 
+async function fetchDecompressedJson(url) {
+  const compressedResponse = await fetch(url);
+  console.log(compressedResponse);
+
+  if (!compressedResponse.ok) 
+    throw new Error(`Failed to fetch ${url}: ${compressedResponse.status}`);
+
+  const compressedStream = compressedResponse.body;
+
+  // Decompress the gzip stream
+  const decompressedStream = compressedStream.pipeThrough(new DecompressionStream("gzip"));
+
+  // Create a new response from the decompressed stream
+  const decompressedResponse = new Response(decompressedStream);
+
+  // Get text from decompressed response and parse JSON
+  const jsonString = await decompressedResponse.text();
+
+  return JSON.parse(jsonString);
+}
+
+
 async function fetchDataset(key) {
     const ds = DATASETS.find(d => d.key === key);
     if (!ds) return null;
     try {
         if (key === 'gdp') return await loadGDPData();
-        if (key === 'sst') return await d3.json(ds.path);
+        if (key === 'sst') return await fetchDecompressedJson(ds.path);
+        
+
         if (!ds.path) throw new Error(`Dataset ${key} has no path to load`);
         const rawCsv = await d3.csv(ds.path);
         const parsed = parseRawRows(rawCsv);
