@@ -9,7 +9,7 @@ const createTimelineScale = async () => {
         .attr("height", height);
     
     // Define the window/frame dimensions
-    const margin = { top: 0, right: 60, bottom: 60, left: 60 };
+    const margin = { top: 20, right: 20, bottom: 20, left: 20 };
     const frameWidth = width - margin.left - margin.right;
     const frameHeight = height - margin.top - margin.bottom;
     
