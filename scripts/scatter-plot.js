@@ -1197,7 +1197,7 @@ const updateCountryOptions = (data) => {
   entries.forEach(([groupName, members], index) => {
     const option = countrySelect.append("option")
       // TODO: maybe think about deparsing the countries of the group 
-      .attr("value", `Group: ${groupName}`)  // prefix: "group:"
+      .attr("value", `Group: ${groupName}`)  // prefix: "Group:"
       .text(groupName)
       .style("font-style", "italic")
       .style("margin", "3px 0");
@@ -1350,8 +1350,8 @@ const applyFilters = (config) => {
     expandedCountries = null;
   } else {
     selectedValues.forEach(val => {
-      if (val.startsWith("group:")) {
-        const groupName = val.slice(6); // remove 'group:' prefix
+      if (val.startsWith("Group: ")) {
+        const groupName = val.slice(7); // remove 'Group: ' prefix
         const groupMembers = countryGroups[groupName] || [];
         groupMembers.forEach(c => expandedCountries.add(c));
       } else {
@@ -1359,6 +1359,7 @@ const applyFilters = (config) => {
       }
     });
   }
+  console.log(expandedCountries);
 
   let filtered = ORIGINAL_DATA;
 
