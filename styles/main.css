@@ -153,17 +153,14 @@ html, body {
     flex: none;
     position: relative;
     overflow: visible !important;
-}
-
-#timeline-chart svg {
-    overflow: visible !important;
-}
-
     display: flex;
     align-content: center;
     justify-content: center;
 }
 
+#timeline-chart svg {
+    overflow: visible !important;
+}
 
 .main-header {
     position: fixed;
