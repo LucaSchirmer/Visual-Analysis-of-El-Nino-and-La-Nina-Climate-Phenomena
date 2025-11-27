@@ -53,10 +53,22 @@ const createTimelineScale = async () => {
         .tickFormat(d3.timeFormat("%Y"))
         .tickSize(6);
     
+    const axisY = 30;
     const axisGroup = window.append("g")
         .attr("class", "timeline-axis")
         .attr("transform", `translate(0, ${frameHeight / 2})`)
         .call(axis);
+
+    const magnifierYOffset = 22; 
+    const magnifierRectHeight = 80; 
+    const requiredBottom = axisY + magnifierYOffset + magnifierRectHeight +20;
+    const bottomOverflow = Math.max(0, requiredBottom - height);
+    const svgHeight = height + bottomOverflow;
+
+    svg.attr("height", svgHeight);
+
+    container.style.overflow = "visible";
+
     
     axisGroup.select(".domain")
         .attr("stroke", "#d0d0d0")
@@ -259,7 +271,7 @@ const createTimelineScale = async () => {
                 
                 // Position magnifier above cursor, centered
                 const magnifierX = Math.max(10, Math.min(d.x - 70, frameWidth - 150));
-                const magnifierY = frameHeight / 2 + 50;
+                const magnifierY = axisY + magnifierYOffset;
                 magnifier.attr("transform", `translate(${magnifierX}, ${magnifierY})`);
                 
                 // Show magnifier
