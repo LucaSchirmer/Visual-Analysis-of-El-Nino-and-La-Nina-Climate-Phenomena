@@ -1,55 +1,125 @@
-/**
- * File constants and functions for creating and rendering the world map
- */
-// rotate 160° to make the Pacific central  
-const WORLD_MAP_PROJECTION_OFFSET_LONGITUDE = 160; 
-const WORLD_MAP_PROJECTION_OFFSET_LATITUDE = 0;
+// ==========================================
+// 1. CONSTANTS & CONFIGURATION
+// ==========================================
 
-const WORLD_MAP_SCALE_FACTOR = 160;
+const MAP_CONFIG = {
+    PROJECTION_OFFSET_LONGITUDE: 160,
+    PROJECTION_OFFSET_LATITUDE: 0,
+    SCALE_FACTOR: 160,
+    ATLAS_URL: "https://unpkg.com/world-atlas@2/countries-110m.json",
+    WORLD_BANK_API_BASE: "https://api.worldbank.org/v2",
+    CONTAINER_ID: "world-map-chart",
+};
 
-const WORLD_MAP_ATLAS_URL = "https://unpkg.com/world-atlas@2/countries-110m.json";
-const COUNTRY_FILL_COLOR = "#eee";
-const COUNTRY_STROKE_COLOR = "#333";
+const UI_CONFIG = {
+    NAVBAR_HEIGHT_PERCENT: 0.07,
+    FOOTER_HEIGHT_PX: 35,
+    MIN_MAP_HEIGHT: 120,
+    TRANSITION_DURATION_MS: 250,
+    TRANSITION_DURATION_LONG_MS: 300,
+};
 
+const COLORS = {
+    COUNTRY_FILL: "#eee",
+    COUNTRY_STROKE: "#333",
+    GDP_GROWTH_POS: "#006837",
+    GDP_GROWTH_NEG: "#a50026",
+    FISHING_FILL: "rgba(0,120,180,0.65)",
+    FISHING_STROKE: "#044",
+    RAINFALL_STROKE: "#ff4500",
+    LEGEND_DEFAULT_BG: "#eee",
+};
 
+const DATASETS = [
+    { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv' },
+    { key: 'gdp', label: 'GDP growth (%)' },
+    { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
+    { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
+];
 
-// normalize a country/name string for matching (module-level utility)
-function normName(n){
+const COUNTRY_NAME_MAPPING = {
+    "United States of America": "United States",
+    "Russia": "Russian Federation",
+    "Dem. Rep. Congo": "Congo, Dem. Rep.",
+    "Congo": "Congo, Rep.",
+    "Vietnam": "Viet Nam",
+    "Venezuela": "Venezuela, RB",
+    "Iran": "Iran, Islamic Rep.",
+    "South Korea": "Korea, Rep.",
+    "North Korea": "Korea, Dem. People's Rep.",
+    "Syria": "Syrian Arab Republic",
+    "Turkey": "Turkiye",
+    "Laos": "Lao PDR",
+    "Kyrgyzstan": "Kyrgyz Republic",
+    "Slovakia": "Slovak Republic",
+    "Egypt": "Egypt, Arab Rep.",
+    "Yemen": "Yemen, Rep.",
+    "Gambia": "Gambia, The",
+    "Bahamas": "Bahamas, The",
+    "Dominican Rep.": "Dominican Republic",
+    "Central African Rep.": "Central African Republic",
+    "Eq. Guinea": "Equatorial Guinea",
+    "Côte d'Ivoire": "Cote d'Ivoire",
+    "Bosnia and Herz.": "Bosnia and Herzegovina",
+    "Macedonia": "North Macedonia",
+    "S. Sudan": "South Sudan",
+    "Eritrea": "Eritrea",
+    "Brunei": "Brunei Darussalam",
+    "Solomon Is.": "Solomon Islands",
+    "New Caledonia": "New Caledonia",
+    "Puerto Rico": "Puerto Rico",
+    "West Bank and Gaza": "Palestine"
+};
+
+// ==========================================
+// 2. UTILITY FUNCTIONS
+// ==========================================
+
+function normName(n) {
     if (!n) return '';
-    // split on whitespace and re-join to normalize multi-space sequences
     return String(n).toLowerCase().split(/\s+/).filter(Boolean).join(' ').trim();
 }
 
-// parse raw CSV rows into a uniform row shape (module-scope helpers to satisfy linters)
-function parseRawRows(raw){
+function getSafeCentroid(feature, projection) {
+    const g = d3.geoCentroid(feature);
+    if (!g || !Number.isFinite(g[0]) || !Number.isFinite(g[1])) return [Number.NaN, Number.NaN];
+    const p = projection(g);
+    if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return [Number.NaN, Number.NaN];
+    return p;
+}
+
+function parseRawRows(raw) {
     return raw.map(r => {
         const out = { region: null, year: null, value: null, iso2: null, country_name: null };
         if (r.year) out.year = +r.year;
-        else if (r.time) out.year = +String(r.time).slice(0,4);
-        else if (r.date) out.year = +String(r.date).slice(0,4);
+        else if (r.time) out.year = +String(r.time).slice(0, 4);
+        else if (r.date) out.year = +String(r.date).slice(0, 4);
+        
         if (r.temperature_celsius) out.value = +r.temperature_celsius;
         else if (r.rainfall_mm) out.value = +r.rainfall_mm;
         else if (r.total_tonnes) out.value = +r.total_tonnes;
         else if (r.oni) out.value = +r.oni;
+
         if (r.region) out.region = +r.region;
         if (r.abbrev) out.iso2 = String(r.abbrev).trim();
         if (r.country_name) out.country_name = String(r.country_name).trim();
         if (r.country_un_code) out.region = +r.country_un_code;
-        if (r.country_iso3 && !out.iso2) out.iso2 = r.country_iso3.slice(0,2);
+        if (r.country_iso3 && !out.iso2) out.iso2 = r.country_iso3.slice(0, 2);
         return out;
     });
 }
 
-function aggregateRows(rows){
+function aggregateRows(rows) {
     const byYear = new Map();
-    for (const r of rows){
+    for (const r of rows) {
         if (!r.year || r.value == null) continue;
         const yearMap = byYear.get(r.year) || new Map();
         const keys = [];
         if (r.region && !Number.isNaN(r.region) && r.region !== 0) keys.push(String(+r.region));
         if (r.iso2) keys.push(String(r.iso2).toUpperCase());
         if (r.country_name) keys.push(normName(r.country_name));
-        for (const k of keys){
+        
+        for (const k of keys) {
             const arr = yearMap.get(k) || [];
             arr.push(r.value);
             yearMap.set(k, arr);
@@ -59,106 +129,79 @@ function aggregateRows(rows){
 
     const byYearMean = new Map();
     const years = [];
-    for (const [yr, yrMap] of byYear.entries()){
+    for (const [yr, yrMap] of byYear.entries()) {
         const m = new Map();
-        for (const [k, arr] of yrMap.entries()){
-            const sum = arr.reduce((a,b)=>a+b,0);
-            m.set(k, sum/arr.length);
+        for (const [k, arr] of yrMap.entries()) {
+            const sum = arr.reduce((a, b) => a + b, 0);
+            m.set(k, sum / arr.length);
         }
         byYearMean.set(yr, m);
         years.push(yr);
     }
-    years.sort((a,b)=>a-b);
+    years.sort((a, b) => a - b);
     return { byYearMean, years };
 }
 
-const createWorldMap = async () => {
-    const container = document.getElementById("world-map-chart");
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+// ==========================================
+// 3. DATA LOADING
+// ==========================================
 
-    // load country data to get geo features
-    const countries = await loadCountries();
+async function loadCountries() {
+    const response = await fetch(MAP_CONFIG.ATLAS_URL);
+    if (!response.ok) throw new Error(`Failed to load atlas: ${response.status}`);
+    const world = await response.json();
+    return topojson.feature(world, world.objects.countries);
+}
 
-    const projection = d3.geoNaturalEarth1()
-        .rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE]) 
-        .scale(WORLD_MAP_SCALE_FACTOR)
-        .fitSize([width, height], countries);
+async function loadGDPData() {
+    const url = `${MAP_CONFIG.WORLD_BANK_API_BASE}/country/all/indicator/NY.GDP.MKTP.KD.ZG?format=json&per_page=20000&date=1990:2024`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`World Bank API error: ${resp.status}`);
+    const json = await resp.json();
+    const raw = (json && json[1]) ? json[1] : [];
 
+    const rows = raw.map(item => ({
+        country_iso3: item.countryiso3code || (item.country && item.country.id) || '',
+        country_name: item.country && item.country.value ? item.country.value : (item.countryiso3code || ''),
+        year: item.date ? +item.date : NaN,
+        value: item.value !== null ? +item.value : null
+    }));
 
-    const svg = d3.select("#world-map-chart")
-        .append("svg")
-        .attr("width", width)
-        .attr("height", height)
-        .attr("viewBox", `0 0 ${width} ${height}`)
-        .attr("preserveAspectRatio", "xMidYMid meet");
-
-    // Create a group to hold the map paths so we can rotate/zoom the projection on drag
-    const mapGroup = svg.append('g').attr('class', 'map-group');
-
-    // Add a background rect to capture drag/zoom events
-    const bg = svg.append('rect')
-        .attr('width', width)
-        .attr('height', height)
-        .attr('fill', 'transparent')
-        .lower();
-
-    // Path generator that uses the mutable projection
-    const pathGenerator = d3.geoPath().projection(projection);
-
-    // helper to compute screen centroid robustly:
-    function centroidXY(feature){
-        const g = d3.geoCentroid(feature);
-        if (!g || !Number.isFinite(g[0]) || !Number.isFinite(g[1])) return [Number.NaN, Number.NaN];
-        const p = projection(g);
-        if (!p || !Number.isFinite(p[0]) || !Number.isFinite(p[1])) return [Number.NaN, Number.NaN];
-        return p;
+    const byYearMean = new Map();
+    for (const r of rows) {
+        if (!r || !r.year || r.value === null || r.value === undefined) continue;
+        const yr = +r.year;
+        const yrMap = byYearMean.get(yr) || new Map();
+        const iso3 = String(r.country_iso3 || '').toUpperCase();
+        const nameKey = normName(r.country_name || '');
+        if (iso3) yrMap.set(iso3, r.value);
+        if (nameKey) yrMap.set(nameKey, r.value);
+        byYearMean.set(yr, yrMap);
     }
+    const years = Array.from(byYearMean.keys()).sort((a, b) => a - b);
+    return { byYearMean, years };
+}
 
-     // bind country data to SVG paths inside the group
-     mapGroup.selectAll("path")
-         .data(countries.features)
-         .join("path")
-         .attr("d", pathGenerator)
-         .attr("fill", COUNTRY_FILL_COLOR)
-         .attr("stroke", COUNTRY_STROKE_COLOR)
-         .attr('stroke-width', 0.5)
-         .attr('vector-effect', 'non-scaling-stroke');
-
-     // fishing overlay layer (circles) inside mapGroup so it follows projection/zoom
-     const fishingLayer = mapGroup.append('g').attr('class', 'fishing-layer');
-
-    // --- Dataset selector UI (above the map) ---
-    // insert toolbar immediately before the SVG so it appears directly above the map
-    const svgNode = d3.select(container).select('svg').node();
-    const toolbar = d3.select(container)
-        .insert('div', () => svgNode)
-        .attr('id', 'map-dataset-toolbar')
-        .style('display', 'flex')
-        .style('justify-content', 'center')
-        .style('align-items', 'center')
-        .style('gap', '8px')
-        .style('width', '100%')
-        .style('margin', '40px 0 8px')
-        .style('font-family', 'sans-serif')
-        .style('font-size', '13px');
-
-    toolbar.append('label').text('Dataset: ');
-    const selector = toolbar.append('select').attr('id', 'map-dataset-select')
-        .style('min-width', '220px');
-
-    const DATASETS = [
-        { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv' },
-        { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
-        { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
-        { key: 'oni', label: 'ONI', path: 'python_scripts/data/oni_monthly.csv' }
-    ];
-
-    for (const d of DATASETS) {
-        selector.append('option').attr('value', d.key).text(d.label);
+async function fetchDataset(key) {
+    const ds = DATASETS.find(d => d.key === key);
+    if (!ds) return null;
+    try {
+        if (key === 'gdp') return await loadGDPData();
+        if (!ds.path) throw new Error(`Dataset ${key} has no path to load`);
+        const rawCsv = await d3.csv(ds.path);
+        const parsed = parseRawRows(rawCsv);
+        return aggregateRows(parsed);
+    } catch (err) {
+        console.warn('Failed to load dataset', key, err);
+        return null;
     }
+}
 
-    // --- Legend placeholder (vertical, right side) ---
+// ==========================================
+// 4. UI HELPERS
+// ==========================================
+
+function setupLegend(container) {
     const legend = d3.select(container)
         .append('div')
         .attr('id', 'map-legend')
@@ -177,22 +220,19 @@ const createWorldMap = async () => {
         .style('font-family', 'sans-serif')
         .style('font-size', '12px');
 
-    // title
-    legend.append('div').attr('class','legend-title').style('font-weight','600').style('margin-bottom','6px').text('');
-    // max label directly under title (above the bar)
-    legend.append('div').attr('class','legend-max').style('font-size','12px').style('margin-bottom','6px').text('');
-    // vertical gradient bar container
-    legend.append('div').attr('class','legend-bar')
-        .style('width','18px')
-        .style('height','220px')
-        .style('border-radius','3px')
-        .style('box-shadow','inset 0 0 0 1px rgba(0,0,0,0.05)')
-        .style('background','#eee');
-    // min label under the bar
-    legend.append('div').attr('class','legend-min').style('font-size','12px').style('margin-top','6px').text('');
+    legend.append('div').attr('class', 'legend-title').style('font-weight', '600').style('margin-bottom', '6px');
+    legend.append('div').attr('class', 'legend-max').style('font-size', '12px').style('margin-bottom', '6px');
+    legend.append('div').attr('class', 'legend-bar')
+        .style('width', '18px')
+        .style('height', '220px')
+        .style('border-radius', '3px')
+        .style('background', COLORS.LEGEND_DEFAULT_BG);
+    legend.append('div').attr('class', 'legend-min').style('font-size', '12px').style('margin-top', '6px');
+    return legend;
+}
 
-    // tooltip will show country name and value for current dataset/year
-    const tooltip = d3.select(container)
+function setupTooltip(container) {
+    return d3.select(container)
         .append('div')
         .attr('id', 'map-tooltip')
         .style('position', 'absolute')
@@ -204,378 +244,480 @@ const createWorldMap = async () => {
         .style('font-size', '12px')
         .style('display', 'none')
         .style('z-index', 2000);
+}
 
-    // store loaded datasets: key -> { byYearMean: Map(year -> Map(key->value)), years: [] }
-    const loaded = new Map();
-    let currentDatasetKey = null;
-    let currentYear = null;
+// Compute a radius scale so that area ∝ value (radius ∝ sqrt(value)).
+function computeRadiusScale(values, sizeConfig = {}) {
+    const { width = 800, height = 400, minRadius = 2, maxRadiusFactor = 1/15 } = sizeConfig;
+    const positive = values.filter(v => v != null && !Number.isNaN(v) && v > 0);
+    if (positive.length === 0) {
+        return d3.scaleSqrt().domain([0, 1]).range([0, minRadius]);
+    }
+    const minV = d3.min(positive);
+    const maxV = d3.max(positive);
+    const viewportMin = Math.min(width, height);
+    const rMax = Math.max(minRadius, Math.min(Math.round(viewportMin * maxRadiusFactor), 80));
+    const domainMin = Math.min(minV, maxV * 0.01);
+    return d3.scaleSqrt().domain([domainMin, maxV]).range([Math.max(0.75, minRadius), rMax]);
+}
 
-    // parse raw CSV rows into a uniform row shape
-    // helper functions moved to module scope
-    async function loadDataset(key, {apply=true} = {}){
-        const ds = DATASETS.find(d=>d.key===key);
-        if (!ds) return;
-        // if already loaded, just apply latest
-        if (loaded.has(key)){
-            if (apply){
-                currentDatasetKey = key;
-                const meta = loaded.get(key);
-                const latest = meta.years.at(-1) ?? null;
-                if (latest != null) applyColorsForDatasetYear(key, latest);
-            }
-            return loaded.get(key);
-        }
+function createSizeLegend(container, scale, values, labelFmt = v => (v == null ? 'n/a' : Number(v).toLocaleString())) {
+    const sel = d3.select(container);
 
-        try {
-            const raw = await d3.csv(ds.path);
-            const rows = parseRawRows(raw);
-            const { byYearMean, years } = aggregateRows(rows);
-            loaded.set(key, { byYearMean, years });
-            if (apply){
-                currentDatasetKey = key;
-                const latest = years.at(-1) ?? null;
-                if (latest != null) applyColorsForDatasetYear(key, latest);
-            }
-            return loaded.get(key);
-        } catch (err){
-            console.warn('Failed to load dataset', key, err);
-        }
+    sel.select('.fishing-size-legend').remove();
+
+    const positives = values.filter(v => v != null && !Number.isNaN(v) && v > 0).sort((a,b)=>a-b);
+    if (positives.length === 0) {
+        sel.append('div').attr('class','fishing-size-legend').text('No fishing data');
+        return;
     }
 
-    function valueForFeatureFromDataset(feature, year, key){
-        const meta = loaded.get(key);
-        if (!meta) return null;
-        const yrMap = meta.byYearMean.get(year);
-        if (!yrMap) return null;
-        if (feature.id != null){
-            const idKey = String(+feature.id);
-            if (yrMap.has(idKey)) return yrMap.get(idKey);
-        }
-        if (feature.properties){
-            const p = feature.properties;
-            if (p.iso_a2 && yrMap.has(p.iso_a2)) return yrMap.get(p.iso_a2);
-            const n = normName(p.name || p.country_name || p.ADMIN || '');
-            if (n && yrMap.has(n)) return yrMap.get(n);
-        }
-        return null;
-    }
+    // choose three reference points: small (first non-zero), half of max, and max
+    const small = positives[0];
+    const max = positives[positives.length - 1];
+    const halfMax = max / 2;
+    const samples = [ { label: 'Small', value: small }, { label: 'Half max', value: halfMax }, { label: 'Max', value: max } ];
 
-    function applyColorsForDatasetYear(key, year){
-        // remember current year for tooltips and external sync
-        currentYear = year;
-        const meta = loaded.get(key);
-        // hide fishing overlay by default; fishing-specific rendering is handled below
-        fishingLayer.style('display', 'none');
-        if (!meta) return;
-        const yrMap = meta.byYearMean.get(year) || new Map();
-        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
-        if (values.length === 0){
-            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
-            // clear legend
-            legend.select('.legend-title').text('');
-            legend.select('.legend-min').text('');
-            legend.select('.legend-max').text('');
-            legend.select('.legend-bar').style('background', '#eee');
-            return;
-        }
-        const minV = d3.min(values);
-        const maxV = d3.max(values);
-        const color = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
-        // if we're rendering fishing, don't recolor countries: instead render circles
-        if (key === 'fishing'){
-            // mute country fills
-            mapGroup.selectAll('path').attr('fill', COUNTRY_FILL_COLOR);
-            renderFishingLayer(year);
-        } else {
-            mapGroup.selectAll('path')
-                .transition().duration(250)
-                .attr('fill', d => {
-                    const v = valueForFeatureFromDataset(d, year, key);
-                    return v == null ? '#eee' : color(v);
-                });
-        }
+    const legend = sel.append('div').attr('class','fishing-size-legend')
+        .style('display','flex')
+        .style('flex-direction','column')
+        .style('align-items','center')
+        .style('gap','10px')
+        .style('font-size','12px')
+        .style('color','#222')
+        .style('padding-top','6px');
 
-        // update legend: gradient, title and labels
-        const ds = DATASETS.find(d=>d.key===key);
-        const title = ds ? ds.label : key;
-        legend.select('.legend-title').text(`${title} — ${year}`);
-
-        // build gradient from max->min by sampling stops so top corresponds to max
-        const stops = 6;
-        const gradColors = [];
-        for (let i = 0; i < stops; i++) {
-            const t = i / (stops - 1);
-            // sample value from max -> min
-            const val = maxV + (minV - maxV) * t;
-            gradColors.push(color(val));
-        }
-        const gradCss = `linear-gradient(to bottom, ${gradColors.join(',')})`;
-        legend.select('.legend-bar').style('background', gradCss);
-        legend.select('.legend-max').text(maxV.toFixed(2));
-        legend.select('.legend-min').text(minV.toFixed(2));
-    }
-
-    // Render fishing as proportional circles at country centroids for the given year
-    function renderFishingLayer(year){
-        const meta = loaded.get('fishing');
-        if (!meta) return;
-        const yrMap = meta.byYearMean.get(year) || new Map();
-        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
-        if (values.length === 0){
-            fishingLayer.selectAll('circle.fish').remove();
-            legend.select('.legend-title').text('Fishing — ' + year);
-            legend.select('.legend-min').text('');
-            legend.select('.legend-max').text('');
-            legend.select('.legend-bar').style('background', '#eee');
-            return;
-        }
-
-        const minV = d3.min(values);
-        const maxV = d3.max(values);
-        const size = d3.scaleSqrt().domain([minV, maxV]).range([2, 24]);
-
-        // bind circles to country features so they update on projection changes
-        const circles = fishingLayer.selectAll('circle.fish')
-            .data(countries.features, d => d.id);
-
-        const enter = circles.enter().append('circle')
-            .attr('class', 'fish')
+    for (const s of samples) {
+        const r = Math.round(scale(s.value));
+        const pad = 6;
+        const w = Math.max(48, r*2 + pad*2);
+        const h = Math.max(28, r*2 + pad*2);
+        const block = legend.append('div').style('display','flex').style('flex-direction','column').style('align-items','center').style('gap','6px');
+        const svg = block.append('svg').attr('width', w).attr('height', h);
+        svg.append('circle')
+            .attr('cx', w/2)
+            .attr('cy', h/2)
+            .attr('r', r)
             .attr('fill', 'rgba(0,120,180,0.65)')
             .attr('stroke', '#044')
-            .attr('stroke-width', 0.4)
-            .attr('r', 0);
+            .attr('stroke-width', 0.4);
 
-        // set initial position for entered elements
-            enter.each(function(d){
-                const c = centroidXY(d);
-                const el = d3.select(this);
-                el.attr('cx', Number.isNaN(c[0]) ? -9999 : c[0]);
-                el.attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
-            });
+        block.append('div').style('font-size','11px').style('color','#333').text(labelFmt(s.value));
+    }
 
-        // animate enters to target radius
-        enter.transition().duration(300).attr('r', function(d){
-            const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
-            return (v == null || Number.isNaN(v)) ? 0 : size(v);
-        });
+    return legend;
+}
 
-        // update existing elements
-        circles.transition().duration(300)
-            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
-            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; })
-            .attr('r', function(d){
-                const v = yrMap.get(String(+d.id)) ?? yrMap.get(d.properties?.iso_a2) ?? yrMap.get(normName(d.properties?.name || d.properties?.ADMIN || ''));
-                return (v == null || Number.isNaN(v)) ? 0 : size(v);
-            });
+function getValueForFeature(feature, year, metaData) {
+    if (!metaData) return null;
+    const yrMap = metaData.byYearMean.get(year);
+    if (!yrMap) return null;
 
-            // exit
-            circles.exit().transition().duration(200).attr('r',0).remove();
-
-            // show fishing overlay
-            fishingLayer.style('display', null);
-
-            // TODO legend update for fishing
-            legend.select('.legend-title').text(`Fishing — ${year}`);
-            // show max at top and min at bottom
-            legend.select('.legend-max').text(maxV.toFixed(0));
-            legend.select('.legend-min').text(minV.toFixed(0));
-            // use a blue gradient (dark at top -> light at bottom) so legend color matches circle fill semantics
-            legend.select('.legend-bar').style('background', 'linear-gradient(to bottom, rgba(0,90,150,0.95), rgba(230,247,255,0.95))');
-
-            // attach circle hover to show tooltip (reuse tooltip format)
-            fishingLayer.selectAll('circle.fish')
-                .on('mouseover', function(event, d){
-                    const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
-                    const val = valueForFeatureFromDataset(d, year, 'fishing');
-                    const txt = val == null || Number.isNaN(val) ? 'No data' : Number(val).toFixed(0) + ' tonnes';
-                    tooltip.style('display', 'block').html(`<div style="font-weight:600">${name}</div><div>Fishing: ${txt} (${year})</div>`);
-                })
-                .on('mousemove', function(event){
-                    const [mx, my] = d3.pointer(event, container);
-                    const offsetX = 12, offsetY = 12;
-                    tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
-                })
-                .on('mouseout', function(){ tooltip.style('display', 'none'); });
+    if (feature.id != null) {
+        const idKey = String(+feature.id);
+        if (yrMap.has(idKey)) return yrMap.get(idKey);
+    }
+    if (feature.properties) {
+        const p = feature.properties;
+        if (p.iso_a2 && yrMap.has(p.iso_a2)) return yrMap.get(p.iso_a2);
+        const iso3 = (p.iso_a3 || p.ISO_A3 || '').toString().toUpperCase();
+        if (iso3 && yrMap.has(iso3)) return yrMap.get(iso3);
+        const rawName = p.name || p.country_name || p.ADMIN || '';
+        const n = normName(rawName);
+        if (n && yrMap.has(n)) return yrMap.get(n);
+        if (rawName && COUNTRY_NAME_MAPPING[rawName]) {
+            const mappedName = normName(COUNTRY_NAME_MAPPING[rawName]);
+            if (yrMap.has(mappedName)) return yrMap.get(mappedName);
         }
+    }
+    return null;
+}
 
-    // attach hover handlers to paths to show the tooltip using cached data
-    mapGroup.selectAll('path')
-        .on('mouseover', function(event, d){
-            const name = d?.properties?.name || d?.properties?.ADMIN || d?.properties?.country_name || 'Unknown';
-            // build tooltip content with all datasets (selected or not)
-            const parts = [];
-            parts.push(`<div style="font-weight:600; margin-bottom:6px">${name}</div>`);
-            for (const ds of DATASETS){
-                const dsKey2 = ds.key;
-                const meta = loaded.get(dsKey2);
-                const latestForDs = meta?.years?.at(-1) ?? null;
-                // prefer the externally selected year when present
-                const lookupYear = (currentYear !== null && currentYear !== undefined) ? currentYear : latestForDs;
-                let val2 = null;
-                if (lookupYear !== null && lookupYear !== undefined) {
-                    val2 = valueForFeatureFromDataset(d, lookupYear, dsKey2);
-                }
-                const hasVal = val2 != null && !Number.isNaN(val2);
-                const valText2 = hasVal ? Number(val2).toFixed(2) : 'No data';
-                const displayYear = lookupYear ?? 'n/a';
-                if (dsKey2 === currentDatasetKey){
-                    parts.push(`<div style="font-weight:600">${ds.label}: ${valText2} <span style="opacity:0.7">(${displayYear})</span></div>`);
-                } else {
-                    parts.push(`<div style="opacity:0.95">${ds.label}: ${valText2} <span style="opacity:0.6">(${displayYear})</span></div>`);
-                }
-            }
-            tooltip.style('display', 'block').html(parts.join(''));
-        })
-        .on('mousemove', function(event){
-            const [mx, my] = d3.pointer(event, container);
-            const offsetX = 12, offsetY = 12;
-            tooltip.style('left', `${mx + offsetX}px`).style('top', `${my + offsetY}px`);
-        })
-        .on('mouseout', function(){
-            tooltip.style('display', 'none');
-        });
+// ==========================================
+// 5. MAIN CREATE FUNCTION
+// ==========================================
 
-    // selection handler: assume datasets are already loaded in `loaded`.
-    // On change, simply switch the visualization to the selected dataset using cached data.
-    // If the dataset isn't present in the cache, fall back to loading it.
-    selector.on('change', (event) => {
-        const k = event.target.value;
-        currentDatasetKey = k;
-        const meta = loaded.get(k);
-        if (meta && Array.isArray(meta.years) && meta.years.length){
-            const latest = meta.years.at(-1) ?? null;
-            if (latest != null) applyColorsForDatasetYear(k, latest);
-        } else {
-            // fallback: dataset not cached yet — load it (keeps backwards compatibility)
-            loadDataset(k);
-        }
-    });
+const createWorldMap = async () => {
+    const container = document.getElementById(MAP_CONFIG.CONTAINER_ID);
+    if (!container) { console.error("Map container not found"); return; }
+    
+    // --- 1. Layout ---
+    const navElem = document.querySelector('nav, .navbar, #navbar, header');
+    const footerElem = document.querySelector('footer, .footer, #footer, .site-footer');
+    const navbarOffset = navElem ? Math.round(navElem.getBoundingClientRect().height) : Math.round(window.innerHeight * UI_CONFIG.NAVBAR_HEIGHT_PERCENT);
+    const footerOffset = footerElem ? Math.round(footerElem.getBoundingClientRect().height) : UI_CONFIG.FOOTER_HEIGHT_PX;
+    const width = container.clientWidth;
+    const height = Math.max(UI_CONFIG.MIN_MAP_HEIGHT, container.clientHeight - navbarOffset - footerOffset);
 
-    // Preload all datasets (without applying colors), then apply the default dataset once ready.
-    (async () => {
-        const preloadPromises = DATASETS.map(d => loadDataset(d.key, { apply: false }).catch(err => {
-            console.warn('Preload failed for dataset', d.key, err);
-            return null;
-        }));
-        await Promise.all(preloadPromises);
-        // after preloading, apply the default dataset's latest year
-        const defaultKey = DATASETS[0]?.key;
-        if (defaultKey){
-            const meta0 = loaded.get(defaultKey);
-            if (meta0 && Array.isArray(meta0.years) && meta0.years.length){
-                const latest = meta0.years.at(-1) ?? null;
-                if (latest != null) {
-                    currentDatasetKey = defaultKey;
-                    applyColorsForDatasetYear(defaultKey, latest);
-                }
-            } else {
-                // fallback: if preload didn't load it, load normally and apply
-                await loadDataset(defaultKey, { apply: true });
-            }
-        }
-    })();
+    // --- 2. Load Geography ---
+    const countries = await loadCountries();
+    
+    // --- 3. Setup Projection ---
+    const projection = d3.geoNaturalEarth1()
+        .rotate([MAP_CONFIG.PROJECTION_OFFSET_LONGITUDE, MAP_CONFIG.PROJECTION_OFFSET_LATITUDE])
+        .scale(MAP_CONFIG.SCALE_FACTOR)
+        .fitSize([width, height], countries);
+    
+    const pathGenerator = d3.geoPath().projection(projection);
 
-    // expose updater that applies to the currently selected dataset
-    // and to active overlays (e.g. fishing) when visible.
-    // This ensures external controls (timeline) can change the year
-    globalThis.updateMapYear = (year) => {
-        // record the externally requested year for tooltips and future lookups
-        currentYear = year;
+    // --- 4. DOM Initialization ---
+    d3.select(container).selectAll("*").remove();
 
-        // update the main choropleth
-        if (currentDatasetKey) applyColorsForDatasetYear(currentDatasetKey, year);
+    const svg = d3.select(container)
+        .append("svg")
+        .attr("width", "100%")
+        .attr("height", "100%")
+        .attr("viewBox", `0 0 ${width} ${height}`)
+        .attr("preserveAspectRatio", "xMidYMid meet")
+        .style("cursor", "grab");
 
-        try {
-            const fishingVisible = fishingLayer.style('display') !== 'none';
-            if (loaded.has('fishing') && (fishingVisible || currentDatasetKey === 'fishing')) {
-                renderFishingLayer(year);
-            }
-        } catch (err) {
-            console.warn('updateMapYear: failed to update fishing overlay', err);
-        }
+    // Background Rect: Catches drag events on empty oceans
+    const bgRect = svg.append('rect')
+        .attr('width', '100%')
+        .attr('height', '100%')
+        .attr('fill', 'transparent')
+        .style('pointer-events', 'all')
+        .lower();
+
+    const mapGroup = svg.append('g').attr('class', 'map-group');
+
+    // Layers
+    const countriesGroup = mapGroup.append('g').attr('class', 'countries-layer');
+    const fishingLayer = mapGroup.append('g').attr('class', 'fishing-layer');
+    const rainfallLayer = mapGroup.append('g').attr('class', 'rainfall-layer');
+
+    // --- 5. HELPER: REDRAW GEOMETRY (DRY) ---
+    // Used by both Drag Rotation and Double-Click Reset
+    const redrawMapGeometry = () => {
+        // Redraw Countries
+        countriesGroup.selectAll('path').attr('d', pathGenerator);
+
+        // Reposition Fishing Circles
+        fishingLayer.selectAll('circle.fish')
+            .attr('cx', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[0]) ? -9999 : c[0]; })
+            .attr('cy', d => { const c = getSafeCentroid(d, projection); return Number.isNaN(c[1]) ? -9999 : c[1]; });
     };
 
-    // Setup zoom behaviour
-    const zoom = d3.zoom()
-        .scaleExtent([1, 8]) // allow zoom between 1x and 8x (Maybe we can offer to the user a menu to set zoom level?)
-        .filter((event) => {
-            return event.type === 'wheel' || event.type === 'touchstart' || event.type === 'touchmove';
+    // Draw fishing circles with adaptive radius scale
+    function drawFishingPoints(countriesFeatures, fishingLayer, projection, values, year, meta, width, height, legendContainer) {
+        const scale = computeRadiusScale(values, { width, height, minRadius: 1.5, maxRadiusFactor: 1/18 });
+
+        const circles = fishingLayer.selectAll('circle.fish')
+            .data(countriesFeatures, d => d.id);
+
+        const enter = circles.enter().append('circle')
+            .attr('class','fish')
+            .attr('fill',COLORS.FISHING_FILL)
+            .attr('stroke',COLORS.FISHING_STROKE)
+            .attr('stroke-width',0.4)
+            .attr('r',0)
+            .attr('pointer-events', 'none');
+
+        enter.each(function(d) {
+            const c = getSafeCentroid(d, projection);
+            d3.select(this).attr('cx', Number.isNaN(c[0]) ? -9999 : c[0])
+                           .attr('cy', Number.isNaN(c[1]) ? -9999 : c[1]);
+        });
+
+        const radiusFor = (d) => {
+            const v = getValueForFeature(d, year, meta);
+            if (v == null || Number.isNaN(v) || v <= 0) return 0;
+            return scale(v);
+        };
+
+        enter.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', radiusFor);
+        circles.transition().duration(UI_CONFIG.TRANSITION_DURATION_LONG_MS).attr('r', radiusFor).attr('pointer-events', 'none');
+        circles.exit().transition().duration(200).attr('r', 0).remove();
+        fishingLayer.style('display', null);
+        redrawMapGeometry();
+
+        if (legendContainer) {
+            const $legend = d3.select(legendContainer);
+            // Hide the default legend elements
+            $legend.select('.legend-bar').style('display', 'none');
+            $legend.select('.legend-max').style('display', 'none');
+            $legend.select('.legend-min').style('display', 'none');
+            $legend.select('.legend-title').text('Fishing (tonnes)');
+
+            // Remove previous fishing legend then create the size legend
+            $legend.select('.fishing-size-legend').remove();
+            createSizeLegend(legendContainer, scale, values, v => `${Math.round(v).toLocaleString()} t`);
+        }
+    }
+
+    // --- 6. INTERACTION DEFINITIONS ---
+
+    // A) Drag Behavior (Rotation with Limits)
+    const drag = d3.drag()
+        .on('start', () => svg.style('cursor', 'grabbing'))
+        .on('drag', (event) => {
+            const rotate = projection.rotate();
+            const k = 0.25; // Horizontal sensitivity
+            const kY = 0.25; // Vertical sensitivity
+            
+            let lambda = rotate[0] + event.dx * k;
+            let phi = rotate[1] - event.dy * kY;
+            
+            // Clamp Latitude (-90 to 90) to prevent flipping upside down
+            phi = Math.max(-90, Math.min(90, phi));
+            
+            projection.rotate([lambda, phi]);
+            redrawMapGeometry();
         })
+        .on('end', () => svg.style('cursor', 'grab'));
+
+    // B) Zoom Behavior (Scaling via Transform)
+    const zoom = d3.zoom()
+        .scaleExtent([1, 8])
+        // Disable D3's default wheel listener so we can use our smooth one
+        .filter((event) => !event || event.type !== 'wheel') 
         .on('zoom', (event) => {
-            // apply transform to group for zooming
             mapGroup.attr('transform', event.transform);
         });
 
-    // Attach zoom to svg
+    // C) Attach Standard Behaviors
+    svg.call(drag);
     svg.call(zoom);
 
-    // Double-click resets zoom transform AND the projection rotation (scroll)
+    // D) Custom Smooth Wheel Zoom
+    svg.node().addEventListener('wheel', (e) => {
+        // Allow standard scroll if keys pressed (ctrl/cmd etc)
+        if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+        e.preventDefault();
+        
+        const delta = -e.deltaY;
+        const factor = Math.pow(1.006, delta);
+        const center = [width / 2, height / 2];
+        const t = d3.zoomTransform(svg.node());
+        
+        let newK = t.k * factor;
+        newK = Math.max(1, Math.min(8, newK));
+        
+        // Smoothly interpolate zoom level
+        svg.transition().duration(120).call(zoom.scaleTo, newK, center);
+    }, { passive: false });
+
+    // E) Double Click Reset
+    svg.on('dblclick.zoom', null); // Remove default D3 zoom-reset
     svg.on('dblclick', () => {
-        // reset projection rotation to initial offsets
-        projection.rotate([WORLD_MAP_PROJECTION_OFFSET_LONGITUDE, WORLD_MAP_PROJECTION_OFFSET_LATITUDE, 0]);
-        // redraw visible paths with the reset projection
-        mapGroup.selectAll('path').attr('d', pathGenerator);
-        // update fishing circles after projection reset so they remain at centroids
-        fishingLayer.selectAll('circle.fish')
-            .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
-            .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
-        svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
+        // 1. Reset Projection
+        projection.rotate([MAP_CONFIG.PROJECTION_OFFSET_LONGITUDE, MAP_CONFIG.PROJECTION_OFFSET_LATITUDE]);
+        redrawMapGeometry();
+        
+        // 2. Reset Zoom Transform
+        svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity);
     });
 
-    let dragStartPos = null;
-    let dragStartRotate = null;
+    // --- 7. Base Map Rendering ---
+    countriesGroup.selectAll("path")
+        .data(countries.features)
+        .join("path")
+        .attr("d", pathGenerator)
+        .attr("fill", COLORS.COUNTRY_FILL)
+        .attr("stroke", COLORS.COUNTRY_STROKE)
+        .attr('stroke-width', 0.5)
+        .attr('vector-effect', 'non-scaling-stroke');
 
-    function setDraggingCursor(isDragging) {
-        svg.style('cursor', isDragging ? 'grabbing' : null);
+    // --- 8. UI Components ---
+    const legend = setupLegend(container);
+    const tooltip = setupTooltip(container);
+
+    // --- 9. State & Update Logic ---
+    const appState = {
+        loadedData: new Map(),
+        currentDatasetKey: null,
+        currentYear: null,
+        selectedDatasets: new Set()
+    };
+
+    function updateMapForYear(year) {
+        appState.currentYear = year;
+        const key = appState.currentDatasetKey;
+        const meta = appState.loadedData.get(key);
+        if (!meta) return;
+
+        d3.select(legend.node()).select('.fishing-size-legend').remove();
+        legend.select('.legend-bar').style('display', null);
+        legend.select('.legend-max').style('display', null);
+        legend.select('.legend-min').style('display', null);
+
+        const yrMap = meta.byYearMean.get(year) || new Map();
+        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+
+        if (values.length === 0) {
+            countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
+            legend.select('.legend-title').text('');
+            return;
+        }
+
+        fishingLayer.style('display', 'none');
+        rainfallLayer.style('display', 'none');
+
+        // --- GDP VISUALIZATION ---
+        if (key === 'gdp') {
+            const absMax = 2.5; 
+            const colorForGdp = (val) => {
+                if (val == null || val === undefined) return '#eee';
+                const t = Math.min(1, Math.abs(val) / absMax);
+                return val > 0 
+                    ? d3.interpolateRgb('#ffffff', COLORS.GDP_GROWTH_POS)(t) 
+                    : d3.interpolateRgb('#ffffff', COLORS.GDP_GROWTH_NEG)(t);
+            };
+
+            countriesGroup.selectAll('path')
+                .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
+                .attr('fill', d => {
+                    const val = getValueForFeature(d, year, meta);
+                    return colorForGdp(val);
+                });
+            
+            legend.select('.legend-title').text(`GDP Growth — ${year}`);
+            const stops = 9;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                const val = absMax - (2 * absMax) * t;
+                return colorForGdp(val);
+            });
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(`≥ ${absMax.toFixed(1)}%`);
+            legend.select('.legend-min').text(`≤ -${absMax.toFixed(1)}%`);
+
+        // --- FISHING VISUALIZATION ---
+        } else if (key === 'fishing') {
+            countriesGroup.selectAll('path').attr('fill', COLORS.COUNTRY_FILL);
+
+            drawFishingPoints(countries.features, fishingLayer, projection, values, year, meta, width, height, legend.node());
+
+        // --- RAINFALL VISUALIZATION ---
+        } else if (key === 'rainfall') {
+            const minV = d3.min(values), maxV = d3.max(values);
+            const colorScale = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
+            
+            countriesGroup.selectAll('path')
+                .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
+                .attr('fill', d => {
+                    const val = getValueForFeature(d, year, meta);
+                    return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
+                });
+
+            rainfallLayer.selectAll('*').remove();
+            rainfallLayer.style('display', 'none');
+
+            // Update legend to reflect rainfall color scale
+            legend.select('.legend-title').text(`Rainfall — ${year}`);
+            const stops = 6;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxV + (minV - maxV) * t);
+            });
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(maxV != null ? maxV.toFixed(2) : 'n/a');
+            legend.select('.legend-min').text(minV != null ? minV.toFixed(2) : 'n/a');
+            
+        // --- STANDARD VISUALIZATION ---
+        } else {
+            const minV = d3.min(values), maxV = d3.max(values);
+            const colorScale = d3.scaleSequential(d3.interpolateRdYlBu).domain([maxV, minV]);
+
+            countriesGroup.selectAll('path')
+                .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
+                .attr('fill', d => {
+                    const val = getValueForFeature(d, year, meta);
+                    return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
+                });
+            
+            const ds = DATASETS.find(d => d.key === key);
+            legend.select('.legend-title').text(`${ds ? ds.label : key} — ${year}`);
+            const stops = 6;
+            const gradColors = Array.from({length: stops}, (_, i) => {
+                const t = i / (stops - 1);
+                return colorScale(maxV + (minV - maxV) * t);
+            });
+            legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
+            legend.select('.legend-max').text(maxV.toFixed(2));
+            legend.select('.legend-min').text(minV.toFixed(2));
+        }
     }
 
-    const drag = d3.drag()
-        .on('start', (event) => {
-            dragStartPos = [event.x, event.y];
-            dragStartRotate = projection.rotate();
-            setDraggingCursor(true);
-        })
-        .on('drag', (event) => {
-            if (!dragStartPos || !dragStartRotate) return;
-            const dx = event.x - dragStartPos[0];
-            const dy = event.y - dragStartPos[1];
-            const sensitivityX = 0.12; // degrees per pixel (Maybe we can offer to the user a menu to set sensibility level?)
-            const sensitivityY = 0.04; // vertical sensitivity
+    async function switchToDataset(key) {
+        appState.currentDatasetKey = key;
+        appState.selectedDatasets.clear();
+        appState.selectedDatasets.add(key);
 
-            // update longitude (lambda) and latitude (phi) for a more natural globe rotation
-            let lambda = dragStartRotate[0] + dx * sensitivityX;
-            let phi = (dragStartRotate[1] || 0) - dy * sensitivityY;
-            // clamp phi to avoid flipping the globe
-            const PHI_LIMIT = 90; 
-            phi = Math.max(-PHI_LIMIT, Math.min(PHI_LIMIT, phi));
+        if (!appState.loadedData.has(key)) {
+            const data = await fetchDataset(key);
+            if (data) appState.loadedData.set(key, data);
+        }
 
-            projection.rotate([lambda, phi, 0]);
+        const meta = appState.loadedData.get(key);
+        if (!meta) return;
 
-            // update all paths
-            mapGroup.selectAll('path').attr('d', pathGenerator);
-            // also update fishing circles positions to follow the rotated projection
-            fishingLayer.selectAll('circle.fish')
-                .attr('cx', function(d){ const c = centroidXY(d); return Number.isNaN(c[0]) ? -9999 : c[0]; })
-                .attr('cy', function(d){ const c = centroidXY(d); return Number.isNaN(c[1]) ? -9999 : c[1]; });
-        })
-        .on('end', () => {
-            setDraggingCursor(false);
-            dragStartPos = null;
-            dragStartRotate = null;
+        let targetYear = appState.currentYear;
+        if (!meta.years.includes(targetYear)) {
+            targetYear = meta.years.at(-1) ?? null;
+        }
+        if (targetYear != null) updateMapForYear(targetYear);
+    }
+
+    // --- 10. Interactions (Tooltip) ---
+    const updateTooltip = (event, d) => {
+        const name = d?.properties?.name || d?.properties?.ADMIN || 'Unknown';
+        const parts = [`<div style="font-weight:600; margin-bottom:6px">${name}</div>`];
+        
+        DATASETS.forEach(ds => {
+            const meta = appState.loadedData.get(ds.key);
+            const latest = meta?.years?.at(-1) ?? null;
+            const lookupYear = appState.currentYear ?? latest;
+            let val = null;
+            if (lookupYear != null) val = getValueForFeature(d, lookupYear, meta);
+            
+            const valText = (val != null && !Number.isNaN(val)) ? Number(val).toFixed(2) : 'No data';
+            const style = (ds.key === appState.currentDatasetKey) ? 'font-weight:600' : 'opacity:0.95';
+            parts.push(`<div style="${style}">${ds.label}: ${valText} <span style="opacity:0.6">(${lookupYear || 'n/a'})</span></div>`);
         });
 
-    // Attach drag to the background so it doesn't interfere with path hits
-    // Ensure no persistent cursor on background — cursor only set while grabbing
-    bg.style('cursor', null);
-    bg.call(drag);
-}
+        tooltip.style('display', 'block').html(parts.join(''));
+        const [mx, my] = d3.pointer(event, container);
+        tooltip.style('left', `${mx + 12}px`).style('top', `${my + 12}px`);
+    };
 
+    countriesGroup.selectAll('path')
+        .on('mouseover', updateTooltip)
+        .on('mousemove', updateTooltip)
+        .on('mouseout', () => tooltip.style('display', 'none'));
 
+    // --- 11. Init & Preload ---
+    const navSwitch = document.getElementById('nav-dataset-switch');
+    if (navSwitch) {
+        navSwitch.innerHTML = '';
+        DATASETS.forEach(ds => {
+            const btn = document.createElement('button');
+            btn.textContent = ds.label;
+            btn.dataset.key = ds.key;
+            btn.addEventListener('click', () => {
+                navSwitch.querySelectorAll('button').forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                switchToDataset(ds.key);
+            });
+            navSwitch.appendChild(btn);
+        });
+    }
 
-const loadCountries = async () => {
-    // Make sure to include topojson-client.js if using TopoJSON
-    const worldData = await d3.json(WORLD_MAP_ATLAS_URL);
-    const countries = topojson.feature(worldData, worldData.objects["countries"]);
+    (async () => {
+        const preloadPromises = DATASETS.map(d => fetchDataset(d.key).then(data => {
+            if (data) appState.loadedData.set(d.key, data);
+        }));
+        await Promise.all(preloadPromises);
 
-    return countries;
-}
+        const defaultKey = DATASETS[0]?.key;
+        if (defaultKey) {
+            const defaultBtn = navSwitch ? navSwitch.querySelector(`button[data-key="${defaultKey}"]`) : null;
+            if (defaultBtn) defaultBtn.classList.add('selected');
+            switchToDataset(defaultKey);
+        }
+    })();
+
+    window.updateMapYear = (year) => {
+        if (appState.currentDatasetKey) updateMapForYear(year);
+    };
+};
