@@ -1,4 +1,3 @@
-// NAVBAR code
 document.addEventListener('DOMContentLoaded', () => {
   const currentPage = window.location.pathname.split('/').pop() || 'index.html';
   document.querySelectorAll('.main-navigation a').forEach(link => {
@@ -14,10 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
     createTimelineScale();
   } 
   
-  // Si on est sur la page du scatter plot
+  // If we are on the scatter plot page
   if (document.querySelector("#scatterplot-chart")) {
     console.log("Initialisation du scatter plot...");
-    // Appeler la fonction asynchrone
+    // call the function to create the scatter plot
     createScatterPlot(CHART_CONFIG);
   }
 });
