@@ -225,7 +225,6 @@ body {
 /* =========================================
    2. GLOBAL LAYOUT
    ========================================= */
-/* ... keep the header ... */
 
 .content {
   flex: 1;
@@ -235,9 +234,6 @@ body {
   margin: 0 auto;
   padding: 30px 20px;
 }
-
-/* ... keep the footer ... */
-
 
 /* =========================================
    6. SCATTERPLOT LAYOUT (DASHBOARD MODE)
@@ -553,4 +549,9 @@ body {
 }
 .expand-card-btn:hover svg {
   fill: white;
+}
+
+
+.footer-link {
+    color: white;
 }
