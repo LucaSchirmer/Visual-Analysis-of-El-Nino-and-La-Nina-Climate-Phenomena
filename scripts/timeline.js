@@ -25,6 +25,7 @@ const createTimelineScale = async () => {
     }));
     
     const strongEvents = [];
+    const everyEvents = [];
     for (let i = 1; i < data.length; i++) {
         const prev = data[i - 1];
         const curr = data[i];
@@ -35,6 +36,7 @@ const createTimelineScale = async () => {
         ) {
             strongEvents.push(curr);
         }
+        everyEvents.push(curr);
     }
     
     // Scale within the frame
@@ -72,26 +74,33 @@ const createTimelineScale = async () => {
         .attr("font-size", "12px")
         .attr("font-weight", "500");
     
-    const eventGroup = window.selectAll(".strong-event")
+    const strongEventGroup = window.selectAll(".strong-event")
         .data(strongEvents)
         .enter()
         .append("g")
         .attr("class", "strong-event")
         .attr("transform", d => `translate(${x(d.date)}, ${frameHeight / 2})`);
-    
+
+    const eventGroup = window.selectAll(".events")
+        .data(everyEvents)
+        .enter()
+        .append("g")
+        .attr("class", "event")
+        .attr("transform", d => `translate(${x(d.date)}, ${frameHeight / 2})`);
+
     // Event markers - tiny rectangles like ticks
-    eventGroup.append("rect")
-        .attr("x", -2)
-        .attr("y", -15)
-        .attr("width", 4)
-        .attr("height", 30)
+    strongEventGroup.append("rect")
+        .attr("x", -2.5)
+        .attr("y", -9)
+        .attr("width", 5)
+        .attr("height", 18)
         .attr("rx", 2)
-        .attr("fill", d => d.phase === "El Niño" ? "#ff6a6a" : "#6aa0ff")
+        .attr("fill", d => d.phase === "El Niño" ?  "#072b8d" : "#AA0000")
         .attr("cursor", "pointer")
         .on("click", onClickEvent);
     
     // Add labels on hover with month and year
-    eventGroup.append("title")
+    strongEventGroup.append("title")
         .text(d => {
             const monthYear = d.date.toLocaleDateString('en-US', { 
                 month: 'long', 
@@ -100,7 +109,6 @@ const createTimelineScale = async () => {
             return `${d.phase} (${d.intensity}) — ${monthYear}`;
         });
 
-    // ===== DRAGGABLE CURSOR =====
     // Create cursor data object
     const cursorData = { x: x(data[0].date) };
     
@@ -152,7 +160,7 @@ const createTimelineScale = async () => {
     const positionIndicator = magnifierTimeline.append("circle")
         .attr("r", 5)
         .attr("cy", 0)
-        .attr("fill", "#ff6a6a")
+        .attr("fill", "#212529")
         .attr("stroke", "#fff")
         .attr("stroke-width", 2);
     
@@ -223,6 +231,59 @@ const createTimelineScale = async () => {
                 
                 // Clear previous month ticks
                 monthTicksGroup.selectAll("*").remove();
+
+                const eventsInYear = everyEvents.filter(ev => ev.date.getFullYear() === year);
+
+                // Intensity → height scale
+                const intensityHeight = {
+                    "Weak": 10,
+                    "Moderate": 15,
+                    "Strong": 25
+                };
+
+                // Intensity → darkening factor (0 = unchanged, 0.5 = much darker)
+                const intensityDarken = {
+                    "Weak": 0.0,
+                    "Moderate": 0.25,
+                    "Strong": 0.45
+                };
+
+                function darkenColor(hex, factor) {
+                    const f = 1 - factor;
+                    const r = Math.round(parseInt(hex.slice(1,3), 16) * f);
+                    const g = Math.round(parseInt(hex.slice(3,5), 16) * f);
+                    const b = Math.round(parseInt(hex.slice(5,7), 16) * f);
+                    return `rgb(${r},${g},${b})`;
+                }
+
+                monthTicksGroup.selectAll(".mini-event")
+                    .data(eventsInYear)
+                    .enter()
+                    .append("rect")
+                    .attr("class", "mini-event")
+                    .attr("x", ev => monthScale(ev.date) - 3.5)
+                    .attr("y", ev => -intensityHeight[ev.intensity] / 2)
+                    .attr("width", 7)
+                    .attr("height", ev => intensityHeight[ev.intensity])
+                    .attr("rx", 2)
+                    .attr("fill", ev => {
+                        let base =
+                            ev.phase === "El Niño" ?  "#6aa0ff":
+                            ev.phase === "La Niña" ?  "#ff6a6a":
+                            "#999";
+
+                        return darkenColor(base, intensityDarken[ev.intensity]);
+                    })
+                    .append("title")
+                    .text(ev => {
+                        const monthYear = ev.date.toLocaleDateString('en-US', {
+                            month: 'long',
+                            year: 'numeric'
+                        });
+                        return `${ev.phase} (${ev.intensity}) — ${monthYear}`;
+                    });
+
+
                 
                 // Add month ticks
                 const months = d3.timeMonth.range(yearStart, yearEnd);
@@ -246,7 +307,7 @@ const createTimelineScale = async () => {
                     .append("text")
                     .attr("class", "month-label")
                     .attr("x", d => monthScale(d))
-                    .attr("y", 15)
+                    .attr("y", 20)
                     .attr("text-anchor", "middle")
                     .attr("font-size", "9px")
                     .attr("fill", "#666")
@@ -264,7 +325,7 @@ const createTimelineScale = async () => {
                 // Show magnifier
                 magnifier.style("display", "block");
             }
-        }, 300); // Show after 300ms of no movement
+        }, 300); 
     }
 
     function dragended(event, d) {
