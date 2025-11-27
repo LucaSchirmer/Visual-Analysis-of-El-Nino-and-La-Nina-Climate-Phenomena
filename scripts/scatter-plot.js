@@ -1,5 +1,4 @@
 const CHART_CONFIG = {
-
   dimensions: {
     totalWidth: 900,
     totalHeight: 600,
@@ -24,9 +23,146 @@ const CHART_CONFIG = {
   }
 };
 
+const countryGroups = {
+  "Negatively Affected by El Niño (Fisheries)": [
+    "Peru", "Ecuador", "Chile", "Colombia",
+    "Mexico", "United States",
+    "Indonesia", "Papua New Guinea"
+  ],
+
+  "Positively Affected by La Niña (Fisheries)": [
+    "Peru", "Ecuador", "Chile",
+    "Mexico", "United States"
+  ],
+
+  "Negatively Affected by La Niña (Fisheries)": [
+    "Indonesia", "Philippines", "Malaysia",
+    "Papua New Guinea"
+  ],
+
+  // Would be useful if we look at vegetation/agriculture
+
+  // "Negatively Affected by El Niño": [
+  //   "Peru", "Ecuador", "Colombia", "Chile", // South America west coast
+  //   "Australia", "Papua New Guinea", "Indonesia", // Oceania often sees droughts
+  //   "India", "Sri Lanka" // South Asia can experience monsoon disruptions
+  // ],
+
+  // "Positively Affected by El Niño": [
+  //   "United States", "Mexico", "Canada", // Southwest North America often wetter
+  //   "Philippines", "Vietnam", "Thailand", // Some Southeast Asia areas
+  //   "Argentina", "Brazil" // Some parts of South America receive more rainfall
+  // ],
+
+  // "Negatively Affected by La Niña": [
+  //   "Brazil", "Argentina", "Uruguay", // South America wetter areas disrupted
+  //   "Malaysia", "Singapore", "Indonesia", // Southeast Asia heavy rain/floods
+  //   "United States (Gulf Coast, Southeast)" // Some U.S. regions see more hurricanes/floods
+  // ],
+
+  // "Positively Affected by La Niña": [
+  //   "Australia", "Papua New Guinea", "New Zealand", // More rain, better crops
+  //   "Russia (Far East)", "China (north east)", // Some parts of Asia
+  //   "Peru", "Ecuador", "Colombia" // Some west coast South America may improve fishery
+  // ]
+};
+
+
+
 // Store original data globally
 let ORIGINAL_DATA = null;
 let YEAR_DOMAIN = null;   // { min: min_year, max: max_year }
+let CURRENT_YEAR = null;
+// GDP year coverage (computed after loading GDP data)
+let GDP_YEAR_RANGE = { min: null, max: null };
+
+// Helper: canonicalize year keys used in rollups (returns a string 'YYYY')
+const yearKeyFromRow = (d) => {
+  if (!d) return String(NaN);
+  if (d.year !== undefined && d.year !== null && d.year !== "") return String(+d.year);
+  if (d.time) return String(new Date(d.time).getFullYear());
+  return String(NaN);
+};
+
+// Normalize a country/name/key to a compact form for matching (lowercase, spaces collapsed)
+const normalizeKey = (s) => {
+  if (!s && s !== 0) return '';
+  try {
+    return String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+  } catch (e) { return String(s || '').toLowerCase(); }
+};
+
+// Country name mapping (variants -> World Bank / canonical forms)
+const COUNTRY_NAME_MAPPING = {
+    "United States of America": "United States",
+    "Russia": "Russian Federation",
+    "Dem. Rep. Congo": "Congo, Dem. Rep.",
+    "Congo": "Congo, Rep.",
+    "Vietnam": "Viet Nam",
+    "Venezuela": "Venezuela, RB",
+    "Iran": "Iran, Islamic Rep.",
+    "South Korea": "Korea, Rep.",
+    "North Korea": "Korea, Dem. People's Rep.",
+    "Syria": "Syrian Arab Republic",
+    "Turkey": "Turkiye",
+    "Laos": "Lao PDR",
+    "Kyrgyzstan": "Kyrgyz Republic",
+    "Slovakia": "Slovak Republic",
+    "Egypt": "Egypt, Arab Rep.",
+    "Yemen": "Yemen, Rep.",
+    "Gambia": "Gambia, The",
+    "Bahamas": "Bahamas, The",
+    "Dominican Rep.": "Dominican Republic",
+    "Central African Rep.": "Central African Republic",
+    "Eq. Guinea": "Equatorial Guinea",
+    "Côte d'Ivoire": "Cote d'Ivoire",
+    "Bosnia and Herz.": "Bosnia and Herzegovina",
+    "Macedonia": "North Macedonia",
+    "S. Sudan": "South Sudan",
+    "Eritrea": "Eritrea",
+    "Brunei": "Brunei Darussalam",
+    "Solomon Is.": "Solomon Islands",
+    "New Caledonia": "New Caledonia",
+    "Puerto Rico": "Puerto Rico",
+    "West Bank and Gaza": "Palestine"
+};
+
+// Helper: fetch and (if needed) decompress a .gz file, with graceful fallbacks.
+const fetchAndDecompress = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  const contentEncoding = (response.headers.get('content-encoding') || '').toLowerCase();
+  const contentType = (response.headers.get('content-type') || '').toLowerCase();
+
+  // If the server used Content-Encoding: gzip the browser already decompressed it.
+  if (contentEncoding.includes('gzip') || (!contentType.includes('application/gzip') && !url.endsWith('.gz'))) {
+    return await response.text();
+  }
+
+  // If DecompressionStream is not available, try reading text (may fail for raw .gz)
+  if (typeof DecompressionStream === 'undefined') {
+    try { return await response.text(); }
+    catch (err) { throw new Error('DecompressionStream not available and response is gzipped. Serve plain CSV or enable server-side decompression.'); }
+  }
+
+  // Try streaming decompress; if it fails let the error propagate to the caller
+  const ds = new DecompressionStream('gzip');
+  const decompressedStream = response.body.pipeThrough(ds);
+  return await new Response(decompressedStream).text();
+};
+
+// Smart CSV loader: if URL ends with .gz, decompress and parse; otherwise use d3.csv
+const loadCsvSmart = async (url) => {
+  // Attempt to load compressed CSV when requested, with a plain CSV fallback.
+  // If the caller passed a .gz URL, try it first, otherwise use d3.csv directly
+  if (url.endsWith('.gz')) {
+    const text = await fetchAndDecompress(url);
+    return d3.csvParse(text);
+  }
+
+  // Not a .gz URL: use normal d3.csv (it returns a promise)
+  return d3.csv(url);
+};
 
 // Available variables for axes (you can add more)
 const VARIABLES = {
@@ -43,6 +179,13 @@ const VARIABLES = {
     accessor: d => d.rainfall,
     unit: " mm",
     format: v => v.toFixed(0)
+  },
+  gdpGrowth: {
+    id: "gdpGrowth",
+    label: "GDP Growth (%)",
+    accessor: d => d.gdpGrowth,
+    unit: " %",
+    format: v => v.toFixed(2)
   },
   fishing: {
     id: "fishing",
@@ -63,44 +206,83 @@ const VARIABLES = {
 let CURRENT_X_VAR = "temperature";
 let CURRENT_Y_VAR = "rainfall";
 
+// Helper to safely format variable values for tooltips (returns 'NA' when missing)
+const formatVarValue = (variable, row) => {
+  try {
+    const v = variable.accessor(row);
+    if (v === null || v === undefined || Number.isNaN(+v)) return 'NA';
+    return `${variable.format(+v)}${variable.unit}`;
+  } catch (e) { return 'NA'; }
+};
+
 // ==========================================
 // MAIN FUNCTION: CREATE SCATTER PLOT
 // ==========================================
 const createScatterPlot = async (config = CHART_CONFIG) => {
   try {
-    // 1. LOAD DATA
     const [rainfallData, temperatureData, fishingData, oniData] = await Promise.all([
-      d3.csv("python_scripts/data/rainfall_by_country.csv"),
-      d3.csv("python_scripts/data/temperature_by_country.csv"),
+      loadCsvSmart("python_scripts/data/rainfall_by_country.csv.gz"),
+      loadCsvSmart("python_scripts/data/temperature_by_country.csv.gz"),
       d3.csv("python_scripts/data/fishing_by_country_year.csv"),
-      d3.csv("python_scripts/data/oni_monthly.csv")
+      d3.csv("python_scripts/data/oni_monthly.csv"),
     ]);
 
-    // 2. PROCESS AND AGGREGATE DATA
-    ORIGINAL_DATA = processClimateData(rainfallData, temperatureData, fishingData, oniData);
+    // Deduce country identifiers for GDP API: prefer `country_iso3`, then `abbrev` (ISO2), then country name
+    const countryIds = [...new Map(rainfallData.map(d => {
+      const id = (d.country_iso3 || d.abbrev || d.country_name || '').toString().trim();
+      return [id || d.country_name, { id }];
+    })).values()].map(o => o.id).filter(Boolean);
 
-    // 2b. CALCULATE YEAR DOMAIN
+    let gdpData = await loadGDPData(countryIds, 1980, 2024);
+
+    try { window._scatter_gdp_raw = gdpData; } catch (e) {}
+    // If the targeted per-country fetch returned nothing, try the project's global loader (data-processing.js)
+    if ((!gdpData || gdpData.length === 0) && typeof window.loadGDPData === 'function') {
+      // per-country GDP fetch fallback suppressed
+      try {
+        const alt = await window.loadGDPData();
+        if (alt && alt.length) {
+          gdpData = alt.map(d => ({ country: d.countryCode || d.country || '', year: d.year, gdpGrowth: d.gdpGrowth ?? d.value ?? d.gdp }));
+          try { window._scatter_gdp_fallback = gdpData; } catch (e) {}
+          // fallback gdpData length suppressed
+        }
+      } catch (err) {
+        // global loadGDPData failed (suppressed)
+      }
+    }
+
+    // Compute GDP year coverage (if available)
+    if (gdpData && gdpData.length) {
+      const yrs = gdpData.map(d => +d.year).filter(y => !Number.isNaN(y));
+      if (yrs.length) {
+        GDP_YEAR_RANGE.min = d3.min(yrs);
+        GDP_YEAR_RANGE.max = d3.max(yrs);
+      }
+      // GDP years range computed (suppressed)
+    }
+    
+    let climateData = processClimateData(rainfallData, temperatureData, fishingData, oniData);
+    ORIGINAL_DATA = integrateGDPIntoData(climateData, gdpData);
+
     const years = ORIGINAL_DATA.map(d => d.year);
-    YEAR_DOMAIN = {
-    min: d3.min(years),
-    max: d3.max(years)
+    YEAR_DOMAIN = { 
+      min: d3.min(years),
+      max: d3.max(years)
     };
-    CURRENT_YEAR = YEAR_DOMAIN.max; // by default, the last available year
+    CURRENT_YEAR = YEAR_DOMAIN.max;
 
-    // 3. CREATE STRUCTURE (controls + SVG container)
     setupVisualization(config);
-
-    // Populate country list once from complete data
     updateCountryOptions(ORIGINAL_DATA);
-
-    // Attach listeners once
     attachEventListeners(config);
+
     globalThis.updateMapYear = (year) => {
       CURRENT_YEAR = year;
       applyFilters(config);
     };
-    d3.select("#country-filter").property("value", "all");
-    CURRENT_YEAR = YEAR_DOMAIN.max;
+    // Ensure multi-select has 'all' selected on initial load
+    const selNode = d3.select('#country-filter').node();
+    if (selNode) { for (const opt of selNode.options) opt.selected = opt.value === 'all'; }
+    try { renderSelectedCountryChips(); } catch(e) {}
     applyFilters(config);
   } catch (error) {
     showError(config.selectors.container, error.message);
@@ -110,13 +292,157 @@ const createScatterPlot = async (config = CHART_CONFIG) => {
 // ==========================================
 // DATA PROCESSING
 // ==========================================
+const loadGDPData = async (countries, startYear, endYear) => {
+  const promises = countries.map(async (country) => {
+    const tryCodes = [country];
+    // If user passed a 3-letter code, also try the first 2 letters (World Bank often uses ISO2)
+    if (country && country.length === 3) tryCodes.push(country.slice(0,2));
+
+    for (const code of tryCodes) {
+      try {
+        const url = `https://api.worldbank.org/v2/country/${code}/indicator/NY.GDP.MKTP.KD.ZG?date=${startYear}:${endYear}&format=json&per_page=1000`;
+        const res = await fetch(url);
+        const data = await res.json();
+        if (!data || !data[1]) continue;
+        return data[1].map(item => ({
+          // include both the code used for the request and the World Bank's country name
+          countryCode: (code || '').toString().toUpperCase(),
+          countryName: item.country && item.country.value ? item.country.value : '',
+          // keep `country` as the returned name when available to help name-based matching
+          country: (item.country && item.country.value) ? item.country.value : (code || '').toString().toUpperCase(),
+          year: item.date ? +item.date : null,
+          gdpGrowth: item.value != null ? +item.value : null
+        })).filter(d => d.year && d.gdpGrowth !== null);
+      } catch (err) {
+        // try next code
+        continue;
+      }
+    }
+    // If all attempts failed, return empty
+    return [];
+  });
+  const results = await Promise.all(promises);
+  const combined = results.flat();
+  return combined;
+};
+
+const integrateGDPIntoData = (originalData, gdpData) => {
+  // Build a map: multiple KEY_FORMS -> Map(year -> gdpGrowth)
+  const gdpByCountry = new Map();
+  gdpData.forEach(d => {
+    const year = +d.year;
+    const value = d.gdpGrowth ?? d.value ?? d.gdpGrowth;
+
+    // Candidate key forms: provided country field (could be code or name), countryCode if present, normalized name
+    const rawCountry = (d.country || d.countryName || d.country_code || d.countryCode || '').toString();
+    const up = rawCountry.toUpperCase().trim();
+    const norm = normalizeKey(rawCountry);
+
+    const keys = new Set([up, norm]);
+    // if looks like ISO3 add its ISO2 variant as well
+    if (up && up.length === 3) keys.add(up.slice(0,2));
+
+    for (const k of keys) {
+      if (!k) continue;
+      if (!gdpByCountry.has(k)) gdpByCountry.set(k, new Map());
+      gdpByCountry.get(k).set(year, value);
+    }
+  });
+
+  const fallbackYears = 2; // search +-2 years for nearest available GDP if exact year missing
+  let attached = 0;
+  let missing = 0;
+  // build normalized mapping for quick lookup (variant -> canonical)
+  const nameMap = {};
+  try {
+    Object.keys(COUNTRY_NAME_MAPPING).forEach(k => {
+      const nk = normalizeKey(k);
+      const tv = COUNTRY_NAME_MAPPING[k];
+      nameMap[nk] = normalizeKey(tv);
+    });
+  } catch (e) {}
+
+  const out = originalData.map(row => {
+    const year = +row.year;
+    let gdp = null;
+
+    // Build candidate lookup keys: various codes and normalized names
+    const candidates = [];
+    if (row.abbrev) candidates.push(row.abbrev.toString().toUpperCase().trim());
+    if (row.country_iso3) candidates.push(row.country_iso3.toString().toUpperCase().trim());
+    if (row.country) candidates.push(row.country.toString().toUpperCase().trim());
+    if (row.country_name) candidates.push(row.country_name.toString().toUpperCase().trim());
+    // normalized forms
+    if (row.country) candidates.push(normalizeKey(row.country));
+    if (row.country_name) candidates.push(normalizeKey(row.country_name));
+
+    let countryMap = null;
+    // Try several lookup strategies: direct key, normalized key, mapping variants, reverse mapping
+    outer: for (const ckey of candidates) {
+      if (!ckey) continue;
+      // direct match (may be uppercase code or name)
+      if (gdpByCountry.has(ckey)) { countryMap = gdpByCountry.get(ckey); break; }
+
+      const normC = normalizeKey(ckey);
+      // normalized match
+      if (gdpByCountry.has(normC)) { countryMap = gdpByCountry.get(normC); break; }
+
+      // try mapped canonical name (variant -> canonical)
+      const mapped = nameMap[normC];
+      if (mapped) {
+        if (gdpByCountry.has(mapped)) { countryMap = gdpByCountry.get(mapped); break; }
+        const mappedUp = mapped.toUpperCase();
+        if (gdpByCountry.has(mappedUp)) { countryMap = gdpByCountry.get(mappedUp); break; }
+      }
+
+      // reverse: if some mapping maps TO this normalized candidate, try that source key
+      for (const [srcNorm, tgtNorm] of Object.entries(nameMap)) {
+        if (tgtNorm === normC) {
+          if (gdpByCountry.has(srcNorm)) { countryMap = gdpByCountry.get(srcNorm); break outer; }
+          const srcUp = srcNorm.toUpperCase();
+          if (gdpByCountry.has(srcUp)) { countryMap = gdpByCountry.get(srcUp); break outer; }
+        }
+      }
+    }
+    if (countryMap) {
+      if (countryMap.has(year)) {
+        gdp = countryMap.get(year);
+      } else {
+        // Try nearby years (previous first, then forward)
+        for (let off = 1; off <= fallbackYears; off++) {
+          if (countryMap.has(year - off)) { gdp = countryMap.get(year - off); break; }
+          if (countryMap.has(year + off)) { gdp = countryMap.get(year + off); break; }
+        }
+      }
+    }
+
+    if (gdp != null) attached++; else missing++;
+
+    return {
+      ...row,
+      gdpGrowth: gdp ?? null
+    };
+  });
+
+  // Helpful debug logging for matching quality
+  try {
+    console.log('[scatter-plot] integrateGDPIntoData: total rows =', originalData.length, 'attached GDP =', attached, 'missing GDP =', missing);
+    const withGdp = out.filter(d => d.gdpGrowth != null).slice(0,10);
+    const withoutGdp = out.filter(d => d.gdpGrowth == null).slice(0,10);
+    console.log('[scatter-plot] sample rows WITH GDP:', withGdp);
+    console.log('[scatter-plot] sample rows WITHOUT GDP:', withoutGdp);
+  } catch (e) {}
+
+  return out;
+}
+
 const processClimateData = (rainfallData, temperatureData, fishingData, oniData) => {  
   // Aggregate precipitation by country and year
   const rainfallByCountry = d3.rollup(
     rainfallData,
     v => d3.mean(v, d => +d.rainfall_mm),
     d => d.country_name,
-    d => new Date(d.time).getFullYear()
+    d => yearKeyFromRow(d)
   );
   
   // Aggregate temperatures by country and year
@@ -124,7 +450,7 @@ const processClimateData = (rainfallData, temperatureData, fishingData, oniData)
     temperatureData,
     v => d3.mean(v, d => +d.temperature_celsius),
     d => d.country_name,
-    d => new Date(d.time).getFullYear()
+    d => yearKeyFromRow(d)
   );
   
   //  Fishing by country + year (tonnes) 
@@ -132,7 +458,7 @@ const processClimateData = (rainfallData, temperatureData, fishingData, oniData)
     fishingData,
     v => d3.sum(v, d => +d.total_tonnes),
     d => d.country_name,
-    d => +d.year
+    d => yearKeyFromRow(d)
   );
 
   //  Annual ONI (global, not by country) 
@@ -192,7 +518,8 @@ const processClimateData = (rainfallData, temperatureData, fishingData, oniData)
         intensity: bestIntensity
       };
     },
-    d => +d.year
+    // Use string keys for years to match other rollups
+    d => String(+d.year)
   );
 
   //  Combine everything 
@@ -232,7 +559,7 @@ const processClimateData = (rainfallData, temperatureData, fishingData, oniData)
 
       combined.push({
         country,
-        year,
+        year: +year,
         rainfall,
         temperature,
         fishing,
@@ -437,12 +764,20 @@ const updateScatterPlot = (data, config) => {
     return v != null && !Number.isNaN(v);
   });
 
-  if (!cleanX.length || !cleanY.length) {
+  // Only plot rows that have numeric values for both selected axes
+  const cleanBoth = data.filter(d => {
+    const xv = xVar.accessor(d);
+    const yv = yVar.accessor(d);
+    return xv != null && !Number.isNaN(+xv) && yv != null && !Number.isNaN(+yv);
+  });
+
+  if (!cleanBoth.length) {
+    // nothing to draw for the currently selected axes
     return;
   }
 
-  const xExtent = d3.extent(cleanX, xVar.accessor);
-  const yExtent = d3.extent(cleanY, yVar.accessor);
+  const xExtent = d3.extent(cleanBoth, xVar.accessor);
+  const yExtent = d3.extent(cleanBoth, yVar.accessor);
 
   const xScale = d3.scaleLinear()
     .domain([xExtent[0] * 0.95, xExtent[1] * 1.05])
@@ -519,7 +854,7 @@ const updateScatterPlot = (data, config) => {
   
   // Points
   const circles = g.selectAll("circle")
-    .data(data)
+    .data(cleanBoth)
     .join("circle")
     .attr("cx", d => xScale(xVar.accessor(d)))
     .attr("cy", d => yScale(yVar.accessor(d)))
@@ -535,7 +870,7 @@ const updateScatterPlot = (data, config) => {
     .duration(800)
     .delay((d, i) => i * 2)
     .attr("r", circleRadius);
-  
+
   // Interactions
   circles
     .on("mouseover", function(event, d) {
@@ -545,13 +880,25 @@ const updateScatterPlot = (data, config) => {
         .attr("r", circleRadius * 1.5)
         .style("opacity", 1);
       
-      let extra = "";
-      if (d.fishing != null) {
-        extra += `Fishing: ${d.fishing.toFixed(0)} t<br/>`;
+      // Use safe formatting helper so missing/non-numeric values display as 'NA'
+      const formattedX = formatVarValue(xVar, d);
+      const formattedY = formatVarValue(yVar, d);
+
+      // Only include extra lines for variables that are not already shown as X or Y
+      const extraParts = [];
+      const xId = CURRENT_X_VAR;
+      const yId = CURRENT_Y_VAR;
+
+      if (xId !== 'fishing' && yId !== 'fishing' && d.fishing != null && !Number.isNaN(+d.fishing)) {
+        extraParts.push(`Fishing: ${Number(d.fishing).toFixed(0)} t`);
       }
-      if (d.oni != null) {
-        extra += `ONI (avg.): ${d.oni.toFixed(2)} (${d.oniPhase || d.phase}, ${d.oniIntensity || "Neutral"})<br/>`;
+      if (xId !== 'oni' && yId !== 'oni' && d.oni != null && !Number.isNaN(+d.oni)) {
+        extraParts.push(`ONI (avg.): ${Number(d.oni).toFixed(2)} (${d.oniPhase || d.phase}, ${d.oniIntensity || "Neutral"})`);
       }
+      if (xId !== 'gdpGrowth' && yId !== 'gdpGrowth' && d.gdpGrowth != null && !Number.isNaN(+d.gdpGrowth)) {
+        extraParts.push(`GDP Growth: ${Number(d.gdpGrowth).toFixed(2)}%`);
+      }
+      const extra = extraParts.length ? extraParts.join('<br/>') + '<br/>' : '';
 
       tooltip
         .style("visibility", "visible")
@@ -559,8 +906,8 @@ const updateScatterPlot = (data, config) => {
           <strong>${d.country}</strong><br/>
           Year: ${d.year}<br/>
           ENSO Phase: <span style="color: ${colorScale(d.phase)}">${d.phase}</span><br/>
-          ${xVar.label}: ${xVar.format(xVar.accessor(d))}${xVar.unit}<br/>
-          ${yVar.label}: ${yVar.format(yVar.accessor(d))}${yVar.unit}<br/>
+          ${xVar.label}: ${formattedX}<br/>
+          ${yVar.label}: ${formattedY}<br/>
           ${extra}
         `);
     })
@@ -603,8 +950,8 @@ const updateScatterPlot = (data, config) => {
       .text(phase);
   });
   
-  // Statistics
-  addStatistics(svg, data, colorScale, totalWidth, totalHeight);
+  // Statistics (for plotted points)
+  addStatistics(svg, cleanBoth, colorScale, totalWidth, totalHeight);
 
 };
 
@@ -631,6 +978,7 @@ const updateCountryComparison = (data, config) => {
   const containerNode = container.node();
   containerNode.addEventListener("dragover", (e) => {
     e.preventDefault();
+    // TODO: FIND OUT WAHT THIS ERROR IS ABOUT AND WHY IT IS GONE (even before my changes)
     const afterElement = getDragAfterElement(containerNode, e.clientX, e.clientY);
     const draggable = document.querySelector(".dragging");
     if (draggable) {
@@ -642,7 +990,7 @@ const updateCountryComparison = (data, config) => {
     }
   });
 
-  //  Préparation des données (inchangé) 
+  //  Prepare the list of countries to display
   const selectedCountries = getSelectedCountries();
   let displayList = selectedCountries.includes("all") ? ["All Countries"] : selectedCountries;
 
@@ -667,7 +1015,7 @@ const updateCountryComparison = (data, config) => {
   const yScale = d3.scaleLinear().domain([yExtent[0] * 0.95, yExtent[1] * 1.05]).range([innerHeight, 0]).nice();
   const colorScale = d3.scaleOrdinal().domain(["El Niño", "La Niña", "Neutral"]).range([config.colors.elNino, config.colors.laNina, config.colors.neutral]);
 
-  //  Génération des cartes 
+  //  GGeneration of cards 
   displayList.forEach(item => {
     let chartData;
     let title;
@@ -691,23 +1039,21 @@ const updateCountryComparison = (data, config) => {
     cardNode.addEventListener("dragstart", () => cardNode.classList.add("dragging"));
     cardNode.addEventListener("dragend", () => cardNode.classList.remove("dragging"));
 
-    // >>> NOUVEAU : BOUTON AGRANDIR <<<
     const expandBtn = card.append("button")
         .attr("class", "expand-card-btn")
         .attr("title", "Expand chart")
-        // SVG icône d'agrandissement
+        // SVG icon for expand (simple four-corner arrows)
         .html('<svg viewBox="0 0 24 24"><path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42 2.87-2.89L21 9V3zM3 9l2.3-2.3 2.87 2.89 1.42-1.42-2.89-2.87L9 3H3zM9 21l-2.3-2.3 2.89-2.87-1.42-1.42-2.87 2.89L3 15v6zM21 15l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6z"/></svg>');
 
-    // Gestion du clic sur le bouton agrandir
+    // click event for expand button
     expandBtn.on("click", (e) => {
-        // Empêche le drag de démarrer si on clique sur le bouton
         e.stopPropagation(); 
         e.preventDefault();
-        // Appelle la fonction d'ouverture de l'overlay
+        // Call the function to open the overlay
         openChartOverlay(chartData, title, config, xVar, yVar, colorScale, xExtent, yExtent);
     });
 
-    //  Rendu du mini SVG (inchangé) 
+    //  Render the mini SVG (unchanged) 
     card.append("div").style("text-align", "center").style("font-size", "13px").style("font-weight", "600").style("margin-bottom", "4px").style("pointer-events", "none").text(title);
     const svg = card.append("svg").attr("width", miniWidth).attr("height", miniHeight).style("pointer-events", "none");
     const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
@@ -757,11 +1103,11 @@ function openChartOverlay(chartData, title, config, xVar, yVar, colorScale, glob
   const yScale = d3.scaleLinear()
     .domain([globalYExtent[0] * 0.95, globalYExtent[1] * 1.05])
     .range([innerHeight, 0]).nice();
-  // Grille X
+  // Grid X
   g.append("g").attr("class", "grid").attr("transform", `translate(0,${innerHeight})`)
     .call(d3.axisBottom(xScale).tickSize(-innerHeight).tickFormat(""))
     .style("stroke-dasharray", "3,3").style("stroke", "#e0e0e0").style("stroke-opacity", 0.5);
-  // Grille Y
+  // Grid Y
   g.append("g").attr("class", "grid")
     .call(d3.axisLeft(yScale).tickSize(-innerWidth).tickFormat(""))
     .style("stroke-dasharray", "3,3").style("stroke", "#e0e0e0").style("stroke-opacity", 0.5);
@@ -840,25 +1186,117 @@ document.addEventListener('DOMContentLoaded', () => {
 // ==========================================
 const updateCountryOptions = (data) => {
   const countrySelect = d3.select("#country-filter");
-  const currentValue = countrySelect.property("value");
-  
+  // Capture current selected values (support multi-select)
+  const currentSelected = countrySelect.selectAll("option:checked").nodes().map(n => n.value);
+
   // Keep only the "All countries" option
   countrySelect.selectAll("option:not([value='all'])").remove();
-  
-  // Add countries from current data
+
+  // Append group options with a prefix to identify them
+  const entries = Object.entries(countryGroups);
+  entries.forEach(([groupName, members], index) => {
+    const option = countrySelect.append("option")
+      // TODO: maybe think about deparsing the countries of the group 
+      .attr("value", `Group: ${groupName}`)  // prefix: "group:"
+      .text(groupName)
+      .style("font-style", "italic")
+      .style("margin", "3px 0");
+
+    const offsetForPreselectedGroups = 10;
+    if (index === 0) {
+      option.style("margin-top", offsetForPreselectedGroups + "px");
+    }
+    if (index === entries.length - 1) {
+      option.style("margin-bottom", offsetForPreselectedGroups + "px");
+    }
+  });
+
+  // Add individual countries from data
   const countries = [...new Set(data.map(d => d.country))].sort();
-  
   countries.forEach(country => {
     countrySelect.append("option")
       .attr("value", country)
+      .style("margin", "3px 0")
       .text(country);
   });
-  
-  // Restore value if it still exists
-  if (currentValue !== "all" && countries.includes(currentValue)) {
-    countrySelect.property("value", currentValue);
+
+  // Restore previous multi-selection if still available, otherwise select 'all'
+  if (currentSelected && currentSelected.length > 0) {
+    // If previous selection was only 'all' or none valid, select 'all'
+    const valid = currentSelected.filter(v => v === 'all' || countries.includes(v));
+    if (valid.length === 0) {
+      countrySelect.selectAll('option').property('selected', function() { return d3.select(this).attr('value') === 'all'; });
+    } else {
+      // set selected for options that match previous choices
+      countrySelect.selectAll('option').property('selected', function() {
+        const v = d3.select(this).attr('value');
+        return valid.includes(v);
+      });
+    }
+  } else {
+    countrySelect.selectAll('option').property('selected', function() { return d3.select(this).attr('value') === 'all'; });
   }
+  // Render a visual cue for selected countries (chips)
+  try { renderSelectedCountryChips(); } catch(e) { /* graceful fallback */ }
 };
+
+// ==========================================
+// RENDER SELECTED COUNTRY CHIPS
+// ==========================================
+const renderSelectedCountryChips = () => {
+  const selNode = d3.select('#country-filter').node();
+  if (!selNode) return;
+
+  // Create container if missing
+  let container = d3.select('#selected-country-chips');
+  if (container.empty()) {
+    // Insert after the country select so layout stays consistent
+    d3.select('#country-filter').node().insertAdjacentHTML('afterend', '<div id="selected-country-chips" class="selected-country-chips" aria-live="polite"><p>Current Selection:</p></div>');
+    container = d3.select('#selected-country-chips');
+  }
+
+  const selectedValues = Array.from(selNode.selectedOptions).map(o => o.value).filter(v => v != null && v !== '');
+
+  // If 'all' selected or nothing selected, show single 'All countries' chip
+  let chipsData = [];
+  if (selectedValues.length === 0 || selectedValues.includes('all')) {
+    chipsData = ['All countries'];
+  } else {
+    chipsData = selectedValues;
+  }
+
+  const chips = container.selectAll('button.country-chip').data(chipsData, d => d);
+  chips.exit().remove();
+
+  const enter = chips.enter()
+    .append('button')
+    .attr('type', 'button')
+    .attr('class', d => `country-chip ${d === 'All countries' ? 'all' : ''}`)
+    .text(d => d)
+    .attr('title', d => (d === 'All countries' ? 'All countries' : `Deselect ${d}`));
+
+  enter.on('click', function(event, d) {
+    const sel = d3.select('#country-filter').node();
+    if (!sel) return;
+    if (d === 'All countries') {
+      // set only 'all' selected
+      for (const opt of sel.options) opt.selected = opt.value === 'all';
+    } else {
+      // deselect the clicked country
+      for (const opt of sel.options) if (opt.value === d) opt.selected = false;
+      // if nothing left selected, fallback to 'all'
+      const anySelected = Array.from(sel.options).some(o => o.selected);
+      if (!anySelected) {
+        for (const opt of sel.options) opt.selected = opt.value === 'all';
+      }
+    }
+    // Trigger change to update plots
+    sel.dispatchEvent(new Event('change'));
+  });
+
+  chips.merge(enter);
+};
+
 
 // ==========================================
 // ATTACH EVENT LISTENERS
@@ -886,9 +1324,14 @@ const attachEventListeners = (config) => {
   });
   
   d3.select("#reset-button").on("click", function() {
-    d3.select("#country-filter").property("value", "all");
+    // For multi-select, set options.selected properly so 'all' is selected
+    const sel = d3.select('#country-filter').node();
+    if (sel) {
+      for (const opt of sel.options) opt.selected = opt.value === 'all';
+    }
     d3.select("#phase-filter").property("value", "All");
-
+    // Update UI chips and filters
+    try { renderSelectedCountryChips(); } catch(e) {}
     applyFilters(config); // everything goes through same logic
     });
 };
@@ -897,26 +1340,56 @@ const attachEventListeners = (config) => {
 // APPLY FILTERS
 // ==========================================
 const applyFilters = (config) => {
-  const selectedCountries = getSelectedCountries();
+  const selectedValues = getSelectedCountries();  // values could be "all", individual country, or "group:Name"
   const phaseValue = d3.select("#phase-filter").property("value");
+
+  let expandedCountries = new Set();
+
+  // If "all" is selected, treat as no filtering on countries
+  if (selectedValues.includes("all")) {
+    expandedCountries = null;
+  } else {
+    selectedValues.forEach(val => {
+      if (val.startsWith("group:")) {
+        const groupName = val.slice(6); // remove 'group:' prefix
+        const groupMembers = countryGroups[groupName] || [];
+        groupMembers.forEach(c => expandedCountries.add(c));
+      } else {
+        expandedCountries.add(val);
+      }
+    });
+  }
 
   let filtered = ORIGINAL_DATA;
 
-  // countries
-  const filterByCountries = selectedCountries.length > 0 && !selectedCountries.includes("all");
-  if (filterByCountries) {
-    filtered = filtered.filter(d => selectedCountries.includes(d.country));
+  // Filter by expanded countries if applicable
+  if (expandedCountries !== null) {
+    filtered = filtered.filter(d => expandedCountries.has(d.country));
   }
 
-  // phase
+  // Filter by phase
   if (phaseValue !== "All") {
     filtered = filtered.filter(d => d.phase === phaseValue);
   }
 
-  // year - CUMUL : afficher toutes les années jusqu'à l'année sélectionnée
+  // Filter by year slider (cumulative)
   if (CURRENT_YEAR !== null && !Number.isNaN(CURRENT_YEAR)) {
     filtered = filtered.filter(d => d.year <= CURRENT_YEAR);
   }
+
+  // If GDP is used on either axis, restrict to years where we actually have GDP
+  const usingGDP = (CURRENT_X_VAR === "gdpGrowth" || CURRENT_Y_VAR === "gdpGrowth");
+  if (usingGDP) {
+    // Don't immediately drop rows with null GDP (accessors/filtering in updateScatterPlot
+    // will remove non-numeric points). Instead, restrict the year range to GDP coverage
+    // so the axis domain is meaningful and the plot won't be empty when comparing to GDP.
+    if (GDP_YEAR_RANGE && GDP_YEAR_RANGE.min != null) {
+      filtered = filtered.filter(d => d.year >= GDP_YEAR_RANGE.min);
+    }
+  }
+
+  // Update the selected-country chips visual cue
+  try { renderSelectedCountryChips(); } catch (e) { /* ignore */ }
 
   updateScatterPlot(filtered, config);
   updateCountryComparison(filtered, config);
