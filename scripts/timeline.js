@@ -124,6 +124,104 @@ const createTimelineScale = async () => {
         .attr("stroke-width", 2)
         .attr("cursor", "grab");
     
+    // Playback controls
+    let isPlaying = false;
+    let playbackInterval = null;
+    const playbackSpeed = 50; // milliseconds per step
+    
+    // Create control buttons group (centered below timeline)
+    const controlsGroup = window.append("g")
+        .attr("class", "playback-controls")
+        .attr("transform", `translate(${frameWidth / 2 - 30}, ${frameHeight / 2 + 50})`);
+    
+    // Play button
+    const playButton = controlsGroup.append("g")
+        .attr("class", "play-button")
+        .attr("cursor", "pointer");
+    
+    playButton.append("circle")
+        .attr("r", 18)
+        .attr("fill", "#666")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 2);
+    
+    playButton.append("path")
+        .attr("d", "M-5,-7 L-5,7 L7,0 Z")
+        .attr("fill", "#fff");
+    
+    // Stop button
+    const stopButton = controlsGroup.append("g")
+        .attr("class", "stop-button")
+        .attr("transform", "translate(45, 0)")
+        .attr("cursor", "pointer")
+        .style("opacity", 0.5);
+    
+    stopButton.append("circle")
+        .attr("r", 18)
+        .attr("fill", "#666")
+        .attr("stroke", "#999")
+        .attr("stroke-width", 2);
+    
+    stopButton.append("rect")
+        .attr("x", -5)
+        .attr("y", -5)
+        .attr("width", 10)
+        .attr("height", 10)
+        .attr("fill", "#fff");
+    
+    // Play button click handler
+    playButton.on("click", function() {
+        if (!isPlaying) {
+            isPlaying = true;
+            playButton.style("opacity", 0.5);
+            stopButton.style("opacity", 1);
+            
+            const minX = 40;
+            const maxX = frameWidth - 40;
+            const step = (maxX - minX) / 200; // Divide into 200 steps
+            
+            playbackInterval = setInterval(() => {
+                const currentX = cursorData.x;
+                const newX = currentX + step;
+                
+                if (newX >= maxX) {
+                    // Reset to beginning
+                    cursorData.x = minX;
+                    cursorHandle.attr("cx", minX);
+                    const dataPoint = getDataAtPosition(minX);
+                    onSlidedCursor(dataPoint);
+                } else {
+                    cursorData.x = newX;
+                    cursorHandle.attr("cx", newX);
+                    
+                    // Update map every few steps to avoid too many calls
+                    if (Math.floor(currentX / step) % 5 === 0) {
+                        const dataPoint = getDataAtPosition(newX);
+                        onSlidedCursor(dataPoint);
+                    }
+                }
+            }, playbackSpeed);
+        }
+    });
+    
+    // Stop button click handler
+    stopButton.on("click", function() {
+        if (isPlaying) {
+            isPlaying = false;
+            playButton.style("opacity", 1);
+            stopButton.style("opacity", 0.5);
+            
+            if (playbackInterval) {
+                clearInterval(playbackInterval);
+                playbackInterval = null;
+            }
+            
+            // Final update at stopped position
+            const dataPoint = getDataAtPosition(cursorData.x);
+            onSlidedCursor(dataPoint);
+        }
+    });
+
     // Magnifying glass popup (initially hidden)
     const magnifier = window.append("g")
         .attr("class", "magnifier")
