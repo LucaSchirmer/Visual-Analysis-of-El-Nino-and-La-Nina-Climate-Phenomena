@@ -535,9 +535,9 @@ function onClickEvent(event, d) {
 }
 
 function onSlidedCursor(dataPoint) {
-    const year = dataPoint.date.getFullYear();
+    const date = dataPoint.date;
     
-    if (typeof globalThis.updateMapYear === 'function') {
+    if (typeof globalThis.updateMapMonth === 'function') {
         try {
             globalThis.updateMapMonth(date);
         } catch (err) {
