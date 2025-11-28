@@ -1,3 +1,44 @@
+/* =========================================
+   NEW: LOCAL DATA LOADING (NO SERVER REQUIRED)
+   ========================================= */
+
+// 1. Map your dataset IDs to the GLOBAL variables from your data_*.js files
+// CHECK: Ensure these variable names match what is inside your .js files!
+const DATA_BLOBS = {
+    // ID from dropdown : Global Variable Name
+    'temperature': typeof temperatureDataBlob !== 'undefined' ? temperatureDataBlob : null,
+    'rainfall':    typeof rainfallDataBlob    !== 'undefined' ? rainfallDataBlob    : null,
+    'sst':         typeof sstDataBlob         !== 'undefined' ? sstDataBlob         : null,
+    'fishing':     typeof fishingDataBlob     !== 'undefined' ? fishingDataBlob     : null
+};
+
+// 2. Helper function to decompress Base64 data locally
+async function loadLocalBlob(base64String, type) {
+    if (!base64String) {
+        throw new Error("Data blob is undefined. Check your variable names in DATA_BLOBS.");
+    }
+
+    // Decode Base64 to binary
+    const binaryString = atob(base64String);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Decompress using the browser's native API
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const response = new Response(stream);
+
+    // Parse based on type
+    if (type === 'json') {
+        return await response.json();
+    } else {
+        const text = await response.text();
+        return d3.csvParse(text); // Uses D3 to parse CSV string directly
+    }
+}
+
+
 // ==========================================
 // 1. CONSTANTS & CONFIGURATION
 // ==========================================
@@ -282,76 +323,43 @@ async function loadGDPData() {
     const years = Array.from(byYearMean.keys()).sort((a, b) => a - b);
     return { byYearMean, years };
 }
+// ============================================
+// DATASET LOADING (From Global Blobs)
+// ============================================
 
-async function fetchDecompressedJson(url) {
-  const compressedResponse = await fetch(url);
-
-  if (!compressedResponse.ok) 
-    throw new Error(`Failed to fetch ${url}: ${compressedResponse.status}`);
-
-  const compressedStream = compressedResponse.body;
-  const decompressedStream = compressedStream.pipeThrough(new DecompressionStream("gzip"));
-  const decompressedResponse = new Response(decompressedStream);
-  const jsonString = await decompressedResponse.text();
-
-  return JSON.parse(jsonString);
-}
-
-async function fetchDecompressedCsv(url, key) {
-  const compressedResponse = await fetch(url);
-
-  if (!compressedResponse.ok) 
-    throw new Error(`Failed to fetch ${url}: ${compressedResponse.status}`);
-
-  const compressedStream = compressedResponse.body;
-  const decompressedStream = compressedStream.pipeThrough(new DecompressionStream("gzip"));
-  const decompressedResponse = new Response(decompressedStream);
-  const csvString = await decompressedResponse.text();
-  
-  let data = d3.csvParse(csvString);
-
-  // Filter dates after 2023-12-31
-  if (key === 'temperature') {
-      const cutoffDate = new Date("2023-12-31");
-      const originalLength = data.length;
-      
-      data = data.filter(d => {
-          // Try multiple common column names (case-insensitive usually helps, but here we are explicit)
-          const dateStr = d.date || d.Date || d.time || d.Time || d.dt; 
-          if (!dateStr) return true; // Keep rows if we can't find a date (fallback)
-          
-          const rowDate = new Date(dateStr);
-          // Check if date is valid
-          if (isNaN(rowDate.getTime())) return true; 
-
-          return rowDate <= cutoffDate;
-      });
-  }
-
-  return data;
-}
-
-async function fetchDataset(key) {
-    const ds = DATASETS.find(d => d.key === key);
-    if (!ds) return null;
-    try {
-        if (key === 'gdp') return await loadGDPData();
-        if (key === 'sst') return await fetchDecompressedJson(ds.path);
-
-        // Handle compressed CSVs
-        if (ds.path && ds.path.endsWith('.gz')) {
-             const rawCsv = await fetchDecompressedCsv(ds.path, ds.key);
-             const parsed = parseRawRows(rawCsv);
-             return aggregateRows(parsed);
+async function fetchDataset(datasetId) {
+    console.log(`Loading dataset locally: ${datasetId}...`);
+    
+    // Exception: GDP uses external API (allowed)
+    if (datasetId === 'gdp') {
+        try {
+            const response = await fetch("https://api.worldbank.org/v2/country/all/indicator/NY.GDP.MKTP.CD?format=json&per_page=10000");
+            const gdpData = await response.json();
+            console.log("GDP data loaded from World Bank API");
+            return gdpData;
+        } catch (error) {
+            console.error("Failed to fetch GDP data:", error);
+            return null;
         }
+    }
 
-        if (!ds.path) throw new Error(`Dataset ${key} has no path to load`);
-        const rawCsv = await d3.csv(ds.path);
-        const parsed = parseRawRows(rawCsv);
-        return aggregateRows(parsed);
-    } catch (err) {
-        console.warn('Failed to load dataset', key, err);
-        return null;
+    // All other datasets: Use local blobs
+    const blob = window.dataBlobs[datasetId];
+    
+    if (!blob) {
+        console.error(`Data blob for ${datasetId} not found! Available:`, Object.keys(window.dataBlobs));
+        return [];
+    }
+
+    try {
+        // SST is JSON, others are CSV
+        const type = (datasetId === 'sst') ? 'json' : 'csv';
+        const data = await window.loadDecompressedBlob(blob, type);
+        console.log(`Successfully loaded ${Array.isArray(data) ? data.length : Object.keys(data).length} records for ${datasetId}`);
+        return data;
+    } catch (error) {
+        console.error(`Failed to load ${datasetId}:`, error);
+        return [];
     }
 }
 

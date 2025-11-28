@@ -21,10 +21,11 @@
     margin-bottom: 30px;
   }
 
-  .footer-link{
+  .footer-link {
     z-index: unset;
   }
 </style>
+
 <header class="main-header">
     <nav class="main-navigation">
         <ul>
@@ -36,15 +37,15 @@
 </header>
 
 <main class="content">
-  <h1 class="main-headline">D3 Visual Analysis — El Niño & La Niña </h1>
+  <h1 class="main-headline">D3 Visual Analysis — El Niño & La Niña</h1>
   
   <!-- Timeline -->
   <div id="timeline-chart"></div>
   
   <!-- Scatterplot -->
   <div id="scatterplot-chart"></div>
-  
 </main>
+
 <div id="chart-overlay-backdrop" class="overlay-backdrop">
   <div class="overlay-content">
     <button id="overlay-close-btn">&times;</button>
@@ -52,25 +53,38 @@
     <div id="overlay-chart-container"></div>
   </div>
 </div>
+
 <footer class="main-footer">
     <p>
         <a href="about.html" class="footer-link">About</a> — 2025 Created for the Challenge Open Data.
     </p>
 </footer>
 
+<!-- 1. Libraries -->
+<script src="scripts/d3.v7.min.js"></script>
 
-<!-- D3 library -->
-<script src="https://d3js.org/d3.v7.min.js"></script>
+<!-- 2. Data Blobs (MUST be before other scripts) -->
+<script src="scripts/data_temperature_by_country.js"></script>
+<script src="scripts/data_rainfall_by_country.js"></script>
+<script src="scripts/data_fishing_by_country_year.js"></script>
+<script src="scripts/data_oni_monthly.js"></script>
 
-<!-- Scatter plot functions -->
+<!-- 3. Main helper (global decompression + data blobs) -->
+<script src="scripts/main.js"></script>
+
+<!-- 4. Feature scripts -->
 <script src="scripts/scatter-plot.js"></script>
-<!-- Timeline functions -->
 <script src="scripts/timeline.js"></script>
 
-<!-- Initialize both visualizations -->
+<!-- 5. Initialize visualizations -->
 <script>
-  createScatterPlot().then(() => {
-    createTimelineScale(false);
+  document.addEventListener('DOMContentLoaded', async function() {
+    try {
+      await createScatterPlot();
+      await createTimelineScale(false);
+    } catch (error) {
+      console.error('Error initializing visualizations:', error);
+    }
   });
 </script>
 

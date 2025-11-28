@@ -2,43 +2,28 @@
 // DATA LOADING & PROCESSING
 
 async function loadTimelineData() {
-    let data = await d3.csv("python_scripts/data/oni_monthly.csv", d => ({
-        date: new Date(d.date),
-        phase: d.phase,
-        intensity: d.intensity
-    }));
-    // cutoff data because only temp data afterwards
-    const cutoffDate = new Date("2023-12-31");
-    data = data.filter(d => d.date <= cutoffDate);
-
-    return data;
-}
-
-function extractEvents(data) {
-    const strongEvents = [];
-    const everyEvents = [];
-
-    for (let i = 1; i < data.length; i++) {
-        const prev = data[i - 1];
-        const curr = data[i];
-
-        const isStrongish = ["Strong", "Very Strong"].includes(curr.intensity);
-        const prevStrongish = ["Strong", "Very Strong"].includes(prev.intensity);
-
-        const phaseChanged = prev.phase !== curr.phase;
-        const intensityChanged = curr.intensity !== prev.intensity;
-
-        if (
-            (curr.phase === "La Niña" || curr.phase === "El Niño") &&
-            isStrongish &&
-            (phaseChanged || intensityChanged)
-        ) {
-            strongEvents.push(curr);
-        }
-
-        everyEvents.push(curr);
+    if (!window.dataBlobs.oni) {
+        console.error("ONI data blob not found!");
+        return [];
     }
-    return { strongEvents, everyEvents };
+
+    try {
+        const csvText = await window.loadDecompressedBlob(window.dataBlobs.oni, 'csv');
+        
+        // Parse the CSV data with row conversion
+        const data = csvText.map(d => ({
+            date: new Date(d.date),
+            phase: d.phase,
+            intensity: d.intensity
+        }));
+
+        // Cutoff data
+        const cutoffDate = new Date("2023-12-31");
+        return data.filter(d => d.date <= cutoffDate);
+    } catch (error) {
+        console.error("Failed to load timeline data:", error);
+        return [];
+    }
 }
 
 
@@ -561,7 +546,32 @@ function onSlidedCursor(dataPoint) {
         console.log('Slided to:', dataPoint.date, dataPoint.phase, dataPoint.intensity);
     }
 }
+function extractEvents(data) {
+    const strongEvents = [];
+    const everyEvents = [];
 
+    for (let i = 1; i < data.length; i++) {
+        const prev = data[i - 1];
+        const curr = data[i];
+
+        const isStrongish = ["Strong", "Very Strong"].includes(curr.intensity);
+        const prevStrongish = ["Strong", "Very Strong"].includes(prev.intensity);
+
+        const phaseChanged = prev.phase !== curr.phase;
+        const intensityChanged = curr.intensity !== prev.intensity;
+
+        if (
+            (curr.phase === "La Niña" || curr.phase === "El Niño") &&
+            isStrongish &&
+            (phaseChanged || intensityChanged)
+        ) {
+            strongEvents.push(curr);
+        }
+
+        // everyEvents.push(curr);
+    }
+    return { strongEvents, everyEvents };
+}
 // MAIN INITIALIZATION
 
 const createTimelineScale = async (isMap) => {

@@ -127,43 +127,6 @@ const COUNTRY_NAME_MAPPING = {
     "West Bank and Gaza": "Palestine"
 };
 
-// Helper: fetch and (if needed) decompress a .gz file, with graceful fallbacks.
-const fetchAndDecompress = async (url) => {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
-  const contentEncoding = (response.headers.get('content-encoding') || '').toLowerCase();
-  const contentType = (response.headers.get('content-type') || '').toLowerCase();
-
-  // If the server used Content-Encoding: gzip the browser already decompressed it.
-  if (contentEncoding.includes('gzip') || (!contentType.includes('application/gzip') && !url.endsWith('.gz'))) {
-    return await response.text();
-  }
-
-  // If DecompressionStream is not available, try reading text (may fail for raw .gz)
-  if (typeof DecompressionStream === 'undefined') {
-    try { return await response.text(); }
-    catch (err) { throw new Error('DecompressionStream not available and response is gzipped. Serve plain CSV or enable server-side decompression.'); }
-  }
-
-  // Try streaming decompress; if it fails let the error propagate to the caller
-  const ds = new DecompressionStream('gzip');
-  const decompressedStream = response.body.pipeThrough(ds);
-  return await new Response(decompressedStream).text();
-};
-
-// Smart CSV loader: if URL ends with .gz, decompress and parse; otherwise use d3.csv
-const loadCsvSmart = async (url) => {
-  // Attempt to load compressed CSV when requested, with a plain CSV fallback.
-  // If the caller passed a .gz URL, try it first, otherwise use d3.csv directly
-  if (url.endsWith('.gz')) {
-    const text = await fetchAndDecompress(url);
-    return d3.csvParse(text);
-  }
-
-  // Not a .gz URL: use normal d3.csv (it returns a promise)
-  return d3.csv(url);
-};
-
 // Available variables for axes (you can add more)
 const VARIABLES = {
   temperature: {
@@ -218,14 +181,24 @@ const formatVarValue = (variable, row) => {
 // ==========================================
 // MAIN FUNCTION: CREATE SCATTER PLOT
 // ==========================================
+// ==========================================
+// MAIN FUNCTION: CREATE SCATTER PLOT (FIXED)
+// ==========================================
 const createScatterPlot = async (config = CHART_CONFIG) => {
   try {
-    const [rainfallData, temperatureData, fishingData, oniData] = await Promise.all([
-      loadCsvSmart("python_scripts/data/rainfall_by_country.csv.gz"),
-      loadCsvSmart("python_scripts/data/temperature_by_country.csv.gz"),
-      d3.csv("python_scripts/data/fishing_by_country_year.csv"),
-      d3.csv("python_scripts/data/oni_monthly.csv"),
-    ]);
+    // Load all data from global blobs
+    console.log('Loading scatterplot data from blobs...');
+    
+    const rainfallData = await window.loadDecompressedBlob(window.dataBlobs.rainfall, 'csv');
+    const temperatureData = await window.loadDecompressedBlob(window.dataBlobs.temperature, 'csv');
+    const fishingData = await window.loadDecompressedBlob(window.dataBlobs.fishing, 'csv');
+    const oniData = await window.loadDecompressedBlob(window.dataBlobs.oni, 'csv');
+
+    console.log('All data loaded successfully');
+    console.log(`- Rainfall: ${rainfallData.length} rows`);
+    console.log(`- Temperature: ${temperatureData.length} rows`);
+    console.log(`- Fishing: ${fishingData.length} rows`);
+    console.log(`- ONI: ${oniData.length} rows`);
 
     // Deduce country identifiers for GDP API: prefer `country_iso3`, then `abbrev` (ISO2), then country name
     const countryIds = [...new Map(rainfallData.map(d => {
@@ -233,23 +206,13 @@ const createScatterPlot = async (config = CHART_CONFIG) => {
       return [id || d.country_name, { id }];
     })).values()].map(o => o.id).filter(Boolean);
 
+    console.log(`Found ${countryIds.length} unique countries for GDP lookup`);
+
+    // Fetch GDP from World Bank API
     let gdpData = await loadGDPData(countryIds, 1980, 2024);
+    console.log(`GDP data fetched: ${gdpData.length} records`);
 
     try { window._scatter_gdp_raw = gdpData; } catch (e) {}
-    // If the targeted per-country fetch returned nothing, try the project's global loader (data-processing.js)
-    if ((!gdpData || gdpData.length === 0) && typeof window.loadGDPData === 'function') {
-      // per-country GDP fetch fallback suppressed
-      try {
-        const alt = await window.loadGDPData();
-        if (alt && alt.length) {
-          gdpData = alt.map(d => ({ country: d.countryCode || d.country || '', year: d.year, gdpGrowth: d.gdpGrowth ?? d.value ?? d.gdp }));
-          try { window._scatter_gdp_fallback = gdpData; } catch (e) {}
-          // fallback gdpData length suppressed
-        }
-      } catch (err) {
-        // global loadGDPData failed (suppressed)
-      }
-    }
 
     // Compute GDP year coverage (if available)
     if (gdpData && gdpData.length) {
@@ -257,13 +220,17 @@ const createScatterPlot = async (config = CHART_CONFIG) => {
       if (yrs.length) {
         GDP_YEAR_RANGE.min = d3.min(yrs);
         GDP_YEAR_RANGE.max = d3.max(yrs);
+        console.log(`GDP year range: ${GDP_YEAR_RANGE.min} - ${GDP_YEAR_RANGE.max}`);
       }
-      // GDP years range computed (suppressed)
     }
     
+    // Process and integrate data
     let climateData = processClimateData(rainfallData, temperatureData, fishingData, oniData);
     ORIGINAL_DATA = integrateGDPIntoData(climateData, gdpData);
 
+    console.log(`Total integrated data points: ${ORIGINAL_DATA.length}`);
+
+    // Compute year domain
     const years = ORIGINAL_DATA.map(d => d.year);
     YEAR_DOMAIN = { 
       min: d3.min(years),
@@ -271,20 +238,32 @@ const createScatterPlot = async (config = CHART_CONFIG) => {
     };
     CURRENT_YEAR = YEAR_DOMAIN.max;
 
+    console.log(`Year range: ${YEAR_DOMAIN.min} - ${YEAR_DOMAIN.max}`);
+
+    // Setup UI and visualization
     setupVisualization(config);
     updateCountryOptions(ORIGINAL_DATA);
     attachEventListeners(config);
 
+    // Expose global function for timeline integration
     globalThis.updateMapYear = (year) => {
       CURRENT_YEAR = year;
       applyFilters(config);
     };
-    // Ensure multi-select has 'all' selected on initial load
+
+    // Ensure 'all' is selected on initial load
     const selNode = d3.select('#country-filter').node();
-    if (selNode) { for (const opt of selNode.options) opt.selected = opt.value === 'all'; }
+    if (selNode) { 
+      for (const opt of selNode.options) opt.selected = opt.value === 'all'; 
+    }
+
     try { renderSelectedCountryChips(); } catch(e) {}
     applyFilters(config);
+
+    console.log('Scatterplot fully initialized');
+
   } catch (error) {
+    console.error('Error in createScatterPlot:', error);
     showError(config.selectors.container, error.message);
   }
 };

@@ -21,7 +21,7 @@
 </header>
 
 <main class="content">
-  <h1 class="main-headline">D3 Visual Analysis — El Niño & La Niña </h1>
+  <h1 class="main-headline">TD3 Visual Analysis — El Niño & La Niña </h1>
   <div class="world-map-chart-wrapper"id="world-map-chart"></div>
   <div id="sst-toggle-container">
     <label>
@@ -45,16 +45,26 @@
 </footer>
 
 
-<!-- D3 library -->
-<script src="https://d3js.org/d3.v7.min.js"></script>
-<!-- TopoJSON library -->
+<!-- 1. Libraries -->
+<script src="scripts/d3.v7.min.js"></script>
+
+<!-- 2. Data Blobs (MUST be before any other scripts) -->
+<script src="scripts/data_temperature_by_country.js"></script>
+<script src="scripts/data_rainfall_by_country.js"></script>
+<script src="scripts/data_global_sst.js"></script>
+<script src="scripts/data_fishing_by_country_year.js"></script>
+<script src="scripts/data_oni_monthly.js"></script>
+
+<!-- 3. TopoJSON (if needed for map) -->
 <script src="https://unpkg.com/topojson-client@3"></script>
-<!-- World map functions -->
-<script src="scripts/world-map.js"></script>
-<!-- Timeline functions -->
-<script src="scripts/timeline.js"></script>
-<!-- Main JS that calls createWorldMap -->
+
+<!-- 4. Main helper functions (MUST be before world-map, timeline, etc) -->
 <script src="scripts/main.js"></script>
+
+<!-- 5. Feature scripts -->
+<script src="scripts/world-map.js"></script>
+<script src="scripts/timeline.js"></script>
+
 
 </body>
 </html>
