@@ -106,7 +106,7 @@ function createEventMarkers(window, events, x, frameHeight, className, clickHand
             .attr("y", -9)
             .attr("r", 4)
             .attr("rx", 2)
-            .attr("fill", d => d.phase === "El Niño" ? "#072b8d" : "#AA0000")
+            .attr("fill", d => d.phase === "El Niño" ? "#AA0000" : "#072b8d")
             .attr("cursor", "pointer")
             .on("click", clickHandler);
         
@@ -410,8 +410,8 @@ function addEventBarsToMagnifier(monthTicksGroup, eventsInYear, monthScale) {
         .attr("rx", 2)
         .attr("fill", ev => {
             let base =
-                ev.phase === "El Niño" ? "#6aa0ff" :
-                ev.phase === "La Niña" ? "#ff6a6a" :
+                ev.phase === "El Niño" ? "#ff6a6a" :
+                ev.phase === "La Niña" ? "#6aa0ff" :
                 "#999";
             return darkenColor(base, intensityDarken[ev.intensity]);
         });
