@@ -225,7 +225,7 @@ function setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle
     const { slowButton, playButton, stopButton, fastButton } = controls;
     
     slowButton.on("click", () => {
-        playbackState.speed = 150;
+        playbackState.speed = 200;
         slowButton.select("circle").attr("fill", "#888").attr("stroke", "#aaa");
         fastButton.select("circle").attr("fill", "#666").attr("stroke", "#999");
         
@@ -236,7 +236,7 @@ function setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle
     });
     
     fastButton.on("click", () => {
-        playbackState.speed = 30;
+        playbackState.speed = 120;
         fastButton.select("circle").attr("fill", "#888").attr("stroke", "#aaa");
         slowButton.select("circle").attr("fill", "#666").attr("stroke", "#999");
         
@@ -466,15 +466,19 @@ function setupDragBehavior(cursorHandle, cursorData, frameWidth, frameHeight, ma
     }
     
     function dragstarted(event, d) {
-        if (playbackState.isPlaying) {
-            stopPlayback(playbackState, playButton, stopButton, cursorData, getDataAtPosition);
+        try{
+            if (playbackState.isPlaying) {
+                stopPlayback(playbackState, playButton, stopButton, cursorData, getDataAtPosition);
+        }
+        }
+        catch (err) {
         }
         
         d3.select(this).raise().attr("stroke", "black");
         isDragging = true;
         lastX = null;
     }
-    
+
     function dragged(event, d) {
         const clampedX = Math.max(40, Math.min(frameWidth - 40, event.x));
         d3.select(this).attr("cx", d.x = clampedX);
@@ -556,7 +560,7 @@ function onSlidedCursor(dataPoint) {
 
 // MAIN INITIALIZATION
 
-const createTimelineScale = async () => {
+const createTimelineScale = async (isMap) => {
     const container = document.getElementById("timeline-chart");
     const width = container.clientWidth;
     const height = container.clientHeight;
@@ -600,22 +604,28 @@ const createTimelineScale = async () => {
     // Create cursor
     const { cursorHandle, cursorData } = createCursor(window, x, data, frameHeight);
     
+    let playbackState = false;
+    let controls = false;
     // Create playback controls
-    const playbackState = { isPlaying: false, interval: null, speed: 150 };
-    const controls = createPlaybackControls(window, frameWidth, frameHeight);
+    if (isMap){
+        playbackState = { isPlaying: false, interval: null, speed: 150 };
+        controls = createPlaybackControls(window, frameWidth, frameHeight);
+    }
     
     // Create magnifier
     const magnifierElements = createMagnifier(window);
     
     // Setup drag behavior (returns getDataAtPosition function)
-    const getDataAtPosition = setupDragBehavior(
-        cursorHandle, cursorData, frameWidth, frameHeight,
-        magnifierElements, everyEvents, data, x,
-        playbackState, controls.playButton, controls.stopButton
-    );
     
+    const getDataAtPosition = setupDragBehavior(
+    cursorHandle, cursorData, frameWidth, frameHeight,
+    magnifierElements, everyEvents, data, x,
+    playbackState? playbackState : null, controls ? controls.playButton : null, controls ? controls.stopButton : null);
+
     // Setup playback handlers
-    setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+    if (isMap){
+        setupPlaybackHandlers(controls, playbackState, cursorData, cursorHandle, frameWidth, getDataAtPosition);
+    }
     
     return x;
 };
