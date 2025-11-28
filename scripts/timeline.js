@@ -2,11 +2,15 @@
 // DATA LOADING & PROCESSING
 
 async function loadTimelineData() {
-    const data = await d3.csv("python_scripts/data/oni_monthly.csv", d => ({
+    let data = await d3.csv("python_scripts/data/oni_monthly.csv", d => ({
         date: new Date(d.date),
         phase: d.phase,
         intensity: d.intensity
     }));
+    // cutoff data because only temp data afterwards
+    const cutoffDate = new Date("2023-12-31");
+    data = data.filter(d => d.date <= cutoffDate);
+
     return data;
 }
 
@@ -607,6 +611,8 @@ const createTimelineScale = async (isMap) => {
     let playbackState = false;
     let controls = false;
     // Create playback controls
+
+    console.log(isMap);
     if (isMap){
         playbackState = { isPlaying: false, interval: null, speed: 150 };
         controls = createPlaybackControls(window, frameWidth, frameHeight);

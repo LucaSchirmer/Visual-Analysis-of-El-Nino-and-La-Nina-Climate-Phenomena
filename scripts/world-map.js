@@ -30,9 +30,9 @@ const COLORS = {
 };
 
 const DATASETS = [
-    { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv' },
+    { key: 'temperature', label: 'Temperature (°C)', path: 'python_scripts/data/temperature_by_country.csv.gz' },
     { key: 'gdp', label: 'GDP growth (%)' },
-    { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv' },
+    { key: 'rainfall', label: 'Rainfall (mm)', path: 'python_scripts/data/rainfall_by_country.csv.gz' },
     { key: 'fishing', label: 'Fishing (tonnes)', path: 'python_scripts/data/fishing_by_country_year.csv' },
     { key: 'sst', label: 'Sea Surface Temperature (°C)', path: 'python_scripts/data/global_sst.json.gz' }
 ];
@@ -90,56 +90,127 @@ function getSafeCentroid(feature, projection) {
 
 function parseRawRows(raw) {
     return raw.map(r => {
-        const out = { region: null, year: null, value: null, iso2: null, country_name: null };
-        if (r.year) out.year = +r.year;
-        else if (r.time) out.year = +String(r.time).slice(0, 4);
-        else if (r.date) out.year = +String(r.date).slice(0, 4);
+        const out = { region: null, year: null, month: null, value: null, iso2: null, country_name: null };
         
+        // Parse Date/Time/Year
+        let dateObj = null;
+        if (r.time) dateObj = new Date(r.time);
+        else if (r.date) dateObj = new Date(r.date);
+        
+        if (dateObj && !isNaN(dateObj)) {
+            out.year = dateObj.getFullYear();
+            out.month = dateObj.getMonth() + 1; // 1-based month
+        } else if (r.year) {
+            out.year = +r.year;
+            if (r.month) out.month = +r.month;
+        }
+
+        // Parse Value
         if (r.temperature_celsius) out.value = +r.temperature_celsius;
         else if (r.rainfall_mm) out.value = +r.rainfall_mm;
         else if (r.total_tonnes) out.value = +r.total_tonnes;
         else if (r.oni) out.value = +r.oni;
 
+        // Parse Identifiers
         if (r.region) out.region = +r.region;
         if (r.abbrev) out.iso2 = String(r.abbrev).trim();
         if (r.country_name) out.country_name = String(r.country_name).trim();
         if (r.country_un_code) out.region = +r.country_un_code;
         if (r.country_iso3 && !out.iso2) out.iso2 = r.country_iso3.slice(0, 2);
+        
         return out;
     });
 }
 
 function aggregateRows(rows) {
     const byYear = new Map();
+    const byYearMonth = new Map(); 
+
     for (const r of rows) {
         if (!r.year || r.value == null) continue;
-        const yearMap = byYear.get(r.year) || new Map();
+
         const keys = [];
         if (r.region && !Number.isNaN(r.region) && r.region !== 0) keys.push(String(+r.region));
         if (r.iso2) keys.push(String(r.iso2).toUpperCase());
         if (r.country_name) keys.push(normName(r.country_name));
-        
+
+        const yearMap = byYear.get(r.year) || new Map();
         for (const k of keys) {
             const arr = yearMap.get(k) || [];
             arr.push(r.value);
             yearMap.set(k, arr);
         }
         byYear.set(r.year, yearMap);
+
+        if (r.month) {
+            if (!byYearMonth.has(r.year)) byYearMonth.set(r.year, new Map());
+            const monthMap = byYearMonth.get(r.year);
+            
+            if (!monthMap.has(r.month)) monthMap.set(r.month, new Map());
+            const keyMap = monthMap.get(r.month);
+
+            for (const k of keys) {
+                const arr = keyMap.get(k) || [];
+                arr.push(r.value);
+                keyMap.set(k, arr);
+            }
+        }
     }
+
+    const computeMeans = (sourceMap) => {
+        const resultMap = new Map();
+        for (const [k, arr] of sourceMap.entries()) {
+            const sum = arr.reduce((a, b) => a + b, 0);
+            resultMap.set(k, sum / arr.length);
+        }
+        return resultMap;
+    };
 
     const byYearMean = new Map();
     const years = [];
     for (const [yr, yrMap] of byYear.entries()) {
-        const m = new Map();
-        for (const [k, arr] of yrMap.entries()) {
-            const sum = arr.reduce((a, b) => a + b, 0);
-            m.set(k, sum / arr.length);
-        }
-        byYearMean.set(yr, m);
+        byYearMean.set(yr, computeMeans(yrMap));
         years.push(yr);
     }
     years.sort((a, b) => a - b);
-    return { byYearMean, years };
+
+    const byYearMonthMean = new Map();
+    for (const [yr, monthMap] of byYearMonth.entries()) {
+        const finalMonthMap = new Map();
+        for (const [mo, keyMap] of monthMap.entries()) {
+            finalMonthMap.set(mo, computeMeans(keyMap));
+        }
+        byYearMonthMean.set(yr, finalMonthMap);
+    }
+
+    // Backfill yearly means from monthly data if needed
+    for (const [year, monthsInYear] of byYearMonthMean) {
+        let yearTargetMap = byYearMean.get(year);
+        if (!yearTargetMap) {
+            yearTargetMap = new Map();
+            byYearMean.set(year, yearTargetMap);
+            years.push(year);
+            years.sort((a, b) => a - b);
+        }
+
+        const tempKeyAggregator = new Map(); 
+
+        for (const [month, keyValues] of monthsInYear) {
+            for (const [key, value] of keyValues) {
+                if (!tempKeyAggregator.has(key)) tempKeyAggregator.set(key, []);
+                tempKeyAggregator.get(key).push(value);
+            }
+        }
+
+        for (const [key, values] of tempKeyAggregator) {
+            if (!yearTargetMap.has(key)) {
+                const sum = values.reduce((a, b) => a + b, 0);
+                yearTargetMap.set(key, sum / values.length);
+            }
+        }
+    }
+    
+    return { byYearMean, byYearMonth: byYearMonthMean, years };
 }
 
 // Fill remaining NaNs by nearest-neighbor search so missing spots get nearest color
@@ -184,7 +255,7 @@ async function loadCountries() {
 }
 
 async function loadGDPData() {
-    const url = `${MAP_CONFIG.WORLD_BANK_API_BASE}/country/all/indicator/NY.GDP.MKTP.KD.ZG?format=json&per_page=20000&date=1990:2024`;
+    const url = `${MAP_CONFIG.WORLD_BANK_API_BASE}/country/all/indicator/NY.GDP.MKTP.KD.ZG?format=json&per_page=20000&date=1990:2023`;
     const resp = await fetch(url);
     if (!resp.ok) throw new Error(`World Bank API error: ${resp.status}`);
     const json = await resp.json();
@@ -226,13 +297,54 @@ async function fetchDecompressedJson(url) {
   return JSON.parse(jsonString);
 }
 
+async function fetchDecompressedCsv(url, key) {
+  const compressedResponse = await fetch(url);
+
+  if (!compressedResponse.ok) 
+    throw new Error(`Failed to fetch ${url}: ${compressedResponse.status}`);
+
+  const compressedStream = compressedResponse.body;
+  const decompressedStream = compressedStream.pipeThrough(new DecompressionStream("gzip"));
+  const decompressedResponse = new Response(decompressedStream);
+  const csvString = await decompressedResponse.text();
+  
+  let data = d3.csvParse(csvString);
+
+  // Filter dates after 2023-12-31
+  if (key === 'temperature') {
+      const cutoffDate = new Date("2023-12-31");
+      const originalLength = data.length;
+      
+      data = data.filter(d => {
+          // Try multiple common column names (case-insensitive usually helps, but here we are explicit)
+          const dateStr = d.date || d.Date || d.time || d.Time || d.dt; 
+          if (!dateStr) return true; // Keep rows if we can't find a date (fallback)
+          
+          const rowDate = new Date(dateStr);
+          // Check if date is valid
+          if (isNaN(rowDate.getTime())) return true; 
+
+          return rowDate <= cutoffDate;
+      });
+  }
+
+  return data;
+}
+
 async function fetchDataset(key) {
     const ds = DATASETS.find(d => d.key === key);
     if (!ds) return null;
     try {
         if (key === 'gdp') return await loadGDPData();
         if (key === 'sst') return await fetchDecompressedJson(ds.path);
-        
+
+        // Handle compressed CSVs
+        if (ds.path && ds.path.endsWith('.gz')) {
+             const rawCsv = await fetchDecompressedCsv(ds.path, ds.key);
+             const parsed = parseRawRows(rawCsv);
+             return aggregateRows(parsed);
+        }
+
         if (!ds.path) throw new Error(`Dataset ${key} has no path to load`);
         const rawCsv = await d3.csv(ds.path);
         const parsed = parseRawRows(rawCsv);
@@ -307,7 +419,7 @@ function computeRadiusScale(values, sizeConfig = {}) {
     return d3.scaleSqrt().domain([domainMin, maxV]).range([Math.max(0.75, minRadius), rMax]);
 }
 
-function createSizeLegend(container, scale, values, labelFmt = v => (v == null ? 'n/a' : Number(v).toLocaleString())) {
+function createSizeLegend(container, scale, values, labelFmt = v => (v == null ? 'N/A' : Number(v).toLocaleString())) {
     const sel = d3.select(container);
     sel.select('.fishing-size-legend').remove();
 
@@ -352,26 +464,43 @@ function createSizeLegend(container, scale, values, labelFmt = v => (v == null ?
     return legend;
 }
 
-function getValueForFeature(feature, year, metaData) {
+function getValueForFeature(feature, year, metaData, month = null) {
     if (!metaData) return null;
-    const yrMap = metaData.byYearMean.get(year);
-    if (!yrMap) return null;
+
+    let activeMap = null;
+    if (month != null && metaData.byYearMonth && metaData.byYearMonth.has(year)) {
+        const monthsInYear = metaData.byYearMonth.get(year);
+        if (monthsInYear.has(month)) {
+            activeMap = monthsInYear.get(month);
+        }
+    }
+
+    if (!activeMap) {
+        if (metaData.byYearMean) {
+            activeMap = metaData.byYearMean.get(year);
+        }
+    }
+
+    if (!activeMap) return null;
 
     if (feature.id != null) {
         const idKey = String(+feature.id);
-        if (yrMap.has(idKey)) return yrMap.get(idKey);
+        if (activeMap.has(idKey)) return activeMap.get(idKey);
     }
     if (feature.properties) {
         const p = feature.properties;
-        if (p.iso_a2 && yrMap.has(p.iso_a2)) return yrMap.get(p.iso_a2);
+        if (p.iso_a2 && activeMap.has(p.iso_a2)) return activeMap.get(p.iso_a2);
+        
         const iso3 = (p.iso_a3 || p.ISO_A3 || '').toString().toUpperCase();
-        if (iso3 && yrMap.has(iso3)) return yrMap.get(iso3);
+        if (iso3 && activeMap.has(iso3)) return activeMap.get(iso3);
+        
         const rawName = p.name || p.country_name || p.ADMIN || '';
         const n = normName(rawName);
-        if (n && yrMap.has(n)) return yrMap.get(n);
+        if (n && activeMap.has(n)) return activeMap.get(n);
+        
         if (rawName && COUNTRY_NAME_MAPPING[rawName]) {
             const mappedName = normName(COUNTRY_NAME_MAPPING[rawName]);
-            if (yrMap.has(mappedName)) return yrMap.get(mappedName);
+            if (activeMap.has(mappedName)) return activeMap.get(mappedName);
         }
     }
     return null;
@@ -711,7 +840,7 @@ const createWorldMap = async () => {
         sstLegend.select('.legend-min').text(minSST != null ? minSST.toFixed(2) : 'n/a');
     }
 
-    function updateMapForMonth(input, monthOpt) {
+        function updateMapForMonth(input, monthOpt) {
         let year = null, month = null;
         if (input instanceof Date) {
             year = input.getFullYear();
@@ -730,7 +859,13 @@ const createWorldMap = async () => {
         appState.currentYear = year;
         appState.currentMonth = month;
 
+        if (appState.currentDatasetKey === 'sst') {
+            renderSstLayer();
+            return;
+        }
+
         const key = appState.currentDatasetKey;
+        if (!appState.loadedData.has(key)) return; 
         const meta = appState.loadedData.get(key);
         if (!meta) return;
 
@@ -741,8 +876,23 @@ const createWorldMap = async () => {
         legend.select('.legend-max').style('display', null);
         legend.select('.legend-min').style('display', null);
         
-        const yrMap = meta.byYearMean.get(year) || new Map();
-        const values = Array.from(yrMap.values()).filter(v => v != null && !Number.isNaN(v));
+        // --- NEW LOGIC: PREFER MONTHLY MAP ---
+        let activeDataMap = null;
+        
+        // 1. Try to get the specific month map
+        if (month != null && meta.byYearMonth && meta.byYearMonth.has(year)) {
+            const monthsInYear = meta.byYearMonth.get(year);
+            if (monthsInYear.has(month)) {
+                activeDataMap = monthsInYear.get(month);
+            }
+        }
+
+        // 2. Fallback to yearly mean if monthly is missing
+        if (!activeDataMap) {
+            activeDataMap = meta.byYearMean.get(year) || new Map();
+        }
+
+        const values = Array.from(activeDataMap.values()).filter(v => v != null && !Number.isNaN(v));
         
         // --- CHECK FOR NO DATA ---
         if (values.length === 0 && key !== 'fishing') {
@@ -769,9 +919,9 @@ const createWorldMap = async () => {
             };
             countriesGroup.selectAll('path')
                 .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
-                .attr('fill', d => colorForGdp(getValueForFeature(d, year, meta)));
+                .attr('fill', d => colorForGdp(getValueForFeature(d, year, meta, month)));
             
-            legend.select('.legend-title').text(`GDP Growth — ${year} (1990-2024)`);
+            legend.select('.legend-title').text(`GDP Growth — ${year} (1990-2023)`);
             const stops = 9;
             const gradColors = Array.from({length: stops}, (_, i) => colorForGdp(absMax - (2 * absMax) * (i / (stops - 1))));
             legend.select('.legend-bar').style('background', `linear-gradient(to bottom, ${gradColors.join(',')})`);
@@ -788,7 +938,7 @@ const createWorldMap = async () => {
             countriesGroup.selectAll('path')
                 .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
                 .attr('fill', d => {
-                    const val = getValueForFeature(d, year, meta);
+                    const val = getValueForFeature(d, year, meta, month);
                     return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
                 });
 
@@ -806,13 +956,14 @@ const createWorldMap = async () => {
             legend.select('.legend-min').text(minV.toFixed(2));
 
         } else {
+            // Generic handler (Rainfall, etc.)
             const minV = d3.min(values), maxV = d3.max(values);
             const colorScale = d3.scaleSequential(d3.interpolateYlGnBu).domain([minV, maxV]);
 
             countriesGroup.selectAll('path')
                 .transition().duration(UI_CONFIG.TRANSITION_DURATION_MS)
                 .attr('fill', d => {
-                    const val = getValueForFeature(d, year, meta);
+                    const val = getValueForFeature(d, year, meta, month);
                     return val == null ? COLORS.COUNTRY_FILL : colorScale(val);
                 });
             
@@ -828,11 +979,12 @@ const createWorldMap = async () => {
             legend.select('.legend-max').text(maxV.toFixed(2));
             legend.select('.legend-min').text(minV.toFixed(2));
         }
-
+        
         renderSstLayer();
     }
 
-    async function switchToDataset(key) {
+
+    async function switchToDataset(key, initialMonth = 1) {
         appState.currentDatasetKey = key;
         const mainLegend = d3.select(legend.node());
 
@@ -841,7 +993,10 @@ const createWorldMap = async () => {
             updateSstVisibility();
             return;
         } else {
-             mainLegend.style('display', 'flex');
+            mainLegend.style('display', 'flex');
+            if (!appState.isSstVisible) null;
+            renderSstLayer();
+            updateSstVisibility();
         }
 
         if (!appState.loadedData.has(key)) {
@@ -853,13 +1008,24 @@ const createWorldMap = async () => {
         if (!meta) return;
 
         const selYear = appState.currentYear == null ? null : +appState.currentYear;
-        let targetYear = (meta.years && meta.years.length) ? meta.years.at(-1) : null;
+
+        // why the minus 2 - you ask? because the data set has 2024 but there is no sst data for 2024 so the load makes no sense! there fore i just rm this shit
+        let targetYear = (meta.years && meta.years.length) ? meta.years.at(-2) : null;
+        
         if (selYear != null && Array.isArray(meta.years) && meta.years.includes(selYear)) {
             targetYear = selYear;
         }
 
-        if (targetYear != null) updateMapForMonth({ year: targetYear, month: appState.currentMonth });
+        let targetMonth = initialMonth;
+        if (targetMonth === null) {
+            targetMonth = appState.currentMonth;
+        }
+
+        if (targetYear != null) {
+            updateMapForMonth({ year: targetYear, month: targetMonth });
+        }
     }
+
 
     // --- 10. Interactions ---
     const updateTooltip = (event, d) => {
@@ -868,15 +1034,25 @@ const createWorldMap = async () => {
         
         DATASETS.forEach(ds => {
             if (ds.key === 'sst') return;
+            
             const meta = appState.loadedData.get(ds.key);
+            if (!meta) return;
+
             const latest = meta?.years?.at(-1) ?? null;
             const lookupYear = appState.currentYear ?? latest;
+            const month = appState.currentMonth;
+            
             let val = null;
-            if (lookupYear != null) val = getValueForFeature(d, lookupYear, meta);
+            if (lookupYear != null && (ds.key === "fishing" || ds.key === "gdp")) val = getValueForFeature(d, lookupYear, meta, month);
+            else if (lookupYear != null) val = getValueForFeature(d, lookupYear, meta, month);
             
             const valText = (val != null && !Number.isNaN(val)) ? Number(val).toFixed(2) : 'No data';
             const style = (ds.key === appState.currentDatasetKey) ? 'font-weight:600' : 'opacity:0.95';
-            parts.push(`<div style="${style}">${ds.label}: ${valText} <span style="opacity:0.6">(${lookupYear || 'n/a'})</span></div>`);
+            if (lookupYear != null && (ds.key === "fishing" || ds.key === "gdp")) {
+                parts.push(`<div style="${style}">${ds.label}: ${valText} <span style="opacity:0.6">(${lookupYear || 'N/A'})</span></div>`);
+            } else {
+                parts.push(`<div style="${style}">${ds.label}: ${valText} <span style="opacity:0.6">(${lookupYear || 'N/A'}, ${month != null ? month : 'N/A'})</span></div>`);
+            }
         });
 
         tooltip.style('display', 'block').html(parts.join(''));
@@ -895,7 +1071,7 @@ const createWorldMap = async () => {
     const navSwitch = document.getElementById('nav-dataset-switch');
     if (navSwitch) {
         navSwitch.innerHTML = '';
-        DATASETS.filter(d => d.key !== 'sst').forEach(ds => { // Exclude SST from buttons
+        DATASETS.filter(d => d.key !== 'sst').forEach(ds => {
             const btn = document.createElement('button');
             btn.textContent = ds.label;
             btn.dataset.key = ds.key;
@@ -906,29 +1082,32 @@ const createWorldMap = async () => {
             });
             navSwitch.appendChild(btn);
         });
+        if (navSwitch.firstChild) navSwitch.firstChild.classList.add('selected');
     }
 
-    (async () => {
-        const dataPromises = DATASETS.map(d => fetchDataset(d.key).then(data => {
-            if (d.key === 'sst') {
+    // Initial Data Load
+    const initialKey = 'temperature';
+    appState.currentDatasetKey = initialKey;
+
+    // PRELOAD ALL DATASETS IN BACKGROUND
+    DATASETS.forEach(ds => {
+        fetchDataset(ds.key).then(data => {
+            if (!data) return;
+            
+            if (ds.key === 'sst') {
                 appState.sstData = data;
-            } else if (data) {
-                appState.loadedData.set(d.key, data);
+                if (appState.isSstVisible) renderSstLayer();
+            } else {
+                appState.loadedData.set(ds.key, data);
             }
-        }));
-        await Promise.all(dataPromises);
+        });
+    });
 
-        updateSstVisibility(); 
-        
-        const defaultKey = DATASETS[0]?.key;
-        if (defaultKey) {
-            const defaultBtn = navSwitch ? navSwitch.querySelector(`button[data-key="${defaultKey}"]`) : null;
-            if (defaultBtn) defaultBtn.classList.add('selected');
-            switchToDataset(defaultKey);
-        }
-    })();
-
-    globalThis.updateMapMonth = (arg, month) => {
-        updateMapForMonth(arg, month);
+    // Wait for the initial dataset specifically to ensure map renders immediately
+    await switchToDataset(initialKey);
+    
+    // Expose global updater for timelinef
+    globalThis.updateMapMonth = (year, month) => {
+        updateMapForMonth(year, month);
     };
 };

@@ -978,7 +978,6 @@ const updateCountryComparison = (data, config) => {
   const containerNode = container.node();
   containerNode.addEventListener("dragover", (e) => {
     e.preventDefault();
-    // TODO: FIND OUT WAHT THIS ERROR IS ABOUT AND WHY IT IS GONE (even before my changes)
     const afterElement = getDragAfterElement(containerNode, e.clientX, e.clientY);
     const draggable = document.querySelector(".dragging");
     if (draggable) {
@@ -1196,7 +1195,6 @@ const updateCountryOptions = (data) => {
   const entries = Object.entries(countryGroups);
   entries.forEach(([groupName, members], index) => {
     const option = countrySelect.append("option")
-      // TODO: maybe think about deparsing the countries of the group 
       .attr("value", `group: ${groupName}`)  // prefix: "group:"
       .text(groupName)
       .style("font-style", "italic")
